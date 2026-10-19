@@ -3,28 +3,31 @@ package com.arznet.app
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.joinAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -35,37 +38,19 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private const val REFRESH_MS = 15_000L
-
-// 1 USD = 3.6725 AED
-private const val AED_PER_USD = 3.6725
-
-private const val MARKET_URL =
-    "https://raw.githubusercontent.com/iran-market/iran-market.github.io/main/data/popular.json"
-
-private const val ALL_MARKET_URL =
-    "https://raw.githubusercontent.com/iran-market/iran-market.github.io/main/data/latest-toman.json"
-
-// API ساختاریافته اونس جهانی طلا
-// نسخه رایگان ممکن است تا 15 دقیقه تأخیر داشته باشد.
-private const val GOLD_URL =
-    "https://api.goldprice.dev/v1/prices?symbol=XAU-USD-SPOT"
-
-private val Navy = Color(0xFF12213A)
+private val Navy = Color(0xFF101D35)
 private val Blue = Color(0xFF2563EB)
-private val Page = Color(0xFFF3F6FB)
-private val Green = Color(0xFF14845C)
-private val Red = Color(0xFFD14343)
-private val Gray = Color(0xFF68758A)
+private val Page = Color(0xFFF4F6FA)
+private val Green = Color(0xFF15966A)
+private val Red = Color(0xFFD94747)
+private const val OUNCE_GRAMS = 31.1034768
+private const val REFRESH_MS = 15_000L
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         setContent {
-            CompositionLocalProvider(
-                LocalLayoutDirection provides LayoutDirection.Rtl
-            ) {
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                 MaterialTheme(
                     colorScheme = lightColorScheme(
                         primary = Blue,
@@ -80,721 +65,238 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private data class MarketPrice(
-    val symbol: String,
-    val name: String,
-    val price: Double,
-    val source: String,
-    val timestamp: String,
-    val stale: Boolean
-)
-
 private data class Quote(
     val id: String,
     val title: String,
     val flag: String,
-    val price: String,
+    val price: Double?,
     val unit: String,
     val source: String,
-    val status: String
+    val note: String = "",
+    val history: List<Double> = emptyList()
 )
 
-private fun fmt(value: Double, digits: Int = 0): String {
-    return NumberFormat.getNumberInstance(Locale("fa", "IR")).apply {
+private data class FeedResult(
+    val usdToman: Double? = null,
+    val gold18Toman: Double? = null,
+    val mesghalToman: Double? = null,
+    val tetherToman: Double? = null,
+    val aedToman: Double? = null,
+    val iqdToman: Double? = null
+)
+
+private fun fmt(value: Double, digits: Int = 0): String =
+    NumberFormat.getNumberInstance(Locale("fa", "IR")).apply {
         maximumFractionDigits = digits
         minimumFractionDigits = 0
     }.format(value)
-}
 
-/*
- * قیمت ورودی و خروجی بر حسب تومان است.
- * قیمت هر درهم × 3.6725 = دلار محاسباتی به تومان
- */
-private fun calculateUsdFromAed(aedPriceToman: Double): Double {
-    return aedPriceToman * AED_PER_USD
-}
-
-private fun calculateAedFromUsd(usdPriceToman: Double): Double {
-    return usdPriceToman / AED_PER_USD
-}
-
-private fun readUrl(address: String): String {
-    val connection = URL(address).openConnection() as HttpURLConnection
-
-    connection.connectTimeout = 15_000
-    connection.readTimeout = 15_000
-    connection.requestMethod = "GET"
-    connection.instanceFollowRedirects = true
-
-    connection.setRequestProperty(
-        "User-Agent",
-        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/131.0 Mobile Safari/537.36"
-    )
-    connection.setRequestProperty("Accept", "application/json,text/plain,*/*")
-    connection.setRequestProperty("Cache-Control", "no-cache")
-    connection.setRequestProperty("Pragma", "no-cache")
-
+private fun getJson(url: String): JSONObject {
+    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"
+        connectTimeout = 10_000
+        readTimeout = 10_000
+        setRequestProperty("Accept", "application/json")
+        setRequestProperty("User-Agent", "ARZ-NET-Android/1.1")
+    }
     try {
-        val code = connection.responseCode
-
-        if (code !in 200..299) {
-            throw IllegalStateException("خطای HTTP: $code")
-        }
-
-        return connection.inputStream
-            .bufferedReader(Charsets.UTF_8)
-            .use { it.readText() }
+        if (connection.responseCode !in 200..299) error("HTTP ${connection.responseCode}")
+        val text = connection.inputStream.bufferedReader().use { it.readText() }
+        return JSONObject(text)
     } finally {
         connection.disconnect()
     }
 }
 
-private fun parsePriceValue(value: Any?): Double {
-    return when (value) {
-        is Number -> value.toDouble()
-
-        is String -> value
-            .replace(",", "")
-            .trim()
-            .toDoubleOrNull() ?: Double.NaN
-
-        else -> Double.NaN
-    }
+private fun validPrice(item: JSONObject): Double? {
+    val value = item.optDouble("price", Double.NaN)
+    return value.takeIf { it.isFinite() && it > 0.0 }
 }
 
-/*
- * پیمایش بازگشتی JSON برای پشتیبانی از:
- *
- * data: [...]
- *
- * و ساختار:
- *
- * data: {
- *   categories: {
- *     currency: [...],
- *     commodity: [...]
- *   }
- * }
- *
- * همچنین اشیای تودرتوی دارای symbol و price پشتیبانی می‌شوند.
- */
-private fun collectMarketItems(
-    value: Any?,
-    output: MutableList<JSONObject>
-) {
-    when (value) {
-        is JSONObject -> {
-            val symbol = value.optString("symbol").trim()
+/** Reads symbols and category labels because feed versions may identify an asset either way. */
+private suspend fun fetchIranFeed(): FeedResult = withContext(Dispatchers.IO) {
+    val root = getJson("https://raw.githubusercontent.com/iran-market/iran-market.github.io/main/data/popular.json")
+    val data = root.optJSONArray("data") ?: JSONArray()
+    var usd: Double? = null
+    var gold18: Double? = null
+    var mesghal: Double? = null
+    var tether: Double? = null
+    var aed: Double? = null
+    var iqd: Double? = null
 
-            if (symbol.isNotBlank() && value.has("price")) {
-                output.add(value)
-                return
+    for (i in 0 until data.length()) {
+        val item = data.optJSONObject(i) ?: continue
+        val price = validPrice(item) ?: continue
+        val symbol = item.optString("symbol").uppercase(Locale.ROOT)
+        val name = item.optString("name").lowercase(Locale.ROOT)
+        val title = item.optString("title").lowercase(Locale.ROOT)
+        val categories = item.optJSONArray("categories")
+        val categoryText = buildString {
+            if (categories != null) {
+                for (j in 0 until categories.length()) append(' ').append(categories.optString(j).lowercase(Locale.ROOT))
             }
-
-            val keys = value.keys()
-
-            while (keys.hasNext()) {
-                val key = keys.next()
-                collectMarketItems(value.opt(key), output)
-            }
+            val singleCategory = item.optString("category")
+            if (singleCategory.isNotBlank()) append(' ').append(singleCategory.lowercase(Locale.ROOT))
         }
+        val labels = "$name $title $categoryText"
 
-        is JSONArray -> {
-            for (i in 0 until value.length()) {
-                collectMarketItems(value.opt(i), output)
-            }
+        when {
+            symbol in setOf("USD_IRR_FREE", "USD_TOMAN", "USD_IRR") ||
+                (labels.contains("dollar") && !labels.contains("canadian")) -> usd = price
+            symbol in setOf("GOLD_18K_IRR", "GOLD_18K_TOMAN") ||
+                (labels.contains("gold") && (labels.contains("18") || labels.contains("18k"))) -> gold18 = price
+            symbol in setOf("GOLD_MESGHAL_IRR", "MESGHAL_GOLD", "GOLD_MESGHAL") ||
+                labels.contains("mesghal") -> mesghal = price
+            symbol in setOf("USDT_IRR", "USDT_TOMAN", "TETHER_IRR", "TETHER_TOMAN") ||
+                symbol.contains("USDT") || labels.contains("tether") -> tether = price
+            symbol in setOf("AED_IRR_FREE", "AED_IRR", "AED_TOMAN") ||
+                symbol.startsWith("AED_") || labels.contains("dirham") || labels.contains("درهم") -> aed = price
+            symbol in setOf("IQD_IRR_FREE", "IQD_IRR", "IQD_TOMAN") ||
+                symbol.startsWith("IQD_") || labels.contains("iraqi dinar") || labels.contains("دینار عراق") -> iqd = price
         }
     }
+    FeedResult(usd, gold18, mesghal, tether, aed, iqd)
 }
 
-private fun parsePrices(jsonText: String): List<MarketPrice> {
-    val root = JSONObject(jsonText)
-    val records = mutableListOf<JSONObject>()
-
-    collectMarketItems(
-        root.opt("data") ?: root,
-        records
-    )
-
-    val result = mutableListOf<MarketPrice>()
-
-    for (item in records) {
-        val symbol = item.optString("symbol").trim()
-
-        val nameFa = item.optString("name_fa").trim()
-        val name = when {
-            nameFa.isNotBlank() -> nameFa
-            item.optString("name").isNotBlank() ->
-                item.optString("name")
-            item.optString("name_en").isNotBlank() ->
-                item.optString("name_en")
-            else -> symbol
-        }
-
-        val price = parsePriceValue(item.opt("price"))
-
-        if (
-            symbol.isBlank() ||
-            !price.isFinite() ||
-            price <= 0.0
-        ) {
-            continue
-        }
-
-        result += MarketPrice(
-            symbol = symbol,
-            name = name,
-            price = price,
-            source = item.optString(
-                "source",
-                "Iran Market Data"
-            ).ifBlank {
-                "Iran Market Data"
-            },
-            timestamp = item.optString(
-                "timestamp_tehran",
-                item.optString("timestamp", "")
-            ),
-            stale = item.optBoolean("stale", false)
-        )
+private suspend fun fetchGoldOunce(): Pair<Double?, String> = withContext(Dispatchers.IO) {
+    try {
+        val json = getJson("https://api.gold-api.com/price/XAU")
+        val price = json.optDouble("price", Double.NaN).takeIf { it.isFinite() && it > 0.0 }
+        if (price != null) return@withContext price to "Gold-API"
+    } catch (_: Exception) {
+        // Keep the dashboard running if this provider is unavailable.
     }
-
-    // حذف نمادهای تکراری
-    return result
-        .associateBy { it.symbol.uppercase(Locale.ROOT) }
-        .values
-        .toList()
+    null to "قیمت در دسترس نیست"
 }
 
-/*
- * دریافت از هر دو فایل بازار.
- * اطلاعات popular.json در صورت تکرار نماد اولویت دارد.
- */
-private fun fetchAllPrices(): List<MarketPrice> {
-    val popularResult = runCatching {
-        parsePrices(readUrl(MARKET_URL))
-    }
-
-    val allResult = runCatching {
-        parsePrices(readUrl(ALL_MARKET_URL))
-    }
-
-    val popular = popularResult.getOrDefault(emptyList())
-    val all = allResult.getOrDefault(emptyList())
-
-    val combined = (all + popular)
-        .associateBy { it.symbol.uppercase(Locale.ROOT) }
-        .values
-        .toList()
-
-    if (combined.isEmpty()) {
-        throw IllegalStateException(
-            "دریافت قیمت بازار ناموفق بود. " +
-                "popular: ${
-                    popularResult.exceptionOrNull()?.message
-                        ?: "بدون داده"
-                } | " +
-                "all: ${
-                    allResult.exceptionOrNull()?.message
-                        ?: "بدون داده"
-                }"
-        )
-    }
-
-    return combined
-}
-
-private fun findPrice(
-    prices: List<MarketPrice>,
-    vararg symbols: String
-): MarketPrice? {
-    for (symbol in symbols) {
-        prices.firstOrNull {
-            it.symbol.equals(symbol, ignoreCase = true)
-        }?.let {
-            return it
-        }
-    }
-
-    return null
-}
-
-private fun findAed(prices: List<MarketPrice>): MarketPrice? {
-    val exact = findPrice(
-        prices,
-        "AED_IRR_FREE",
-        "AED_IRT_FREE",
-        "AED_IRR",
-        "AED_IRT"
-    )
-
-    if (exact != null) {
-        return exact
-    }
-
-    return prices.firstOrNull {
-        val symbol = it.symbol.uppercase(Locale.ROOT)
-
-        symbol.startsWith("AED_") &&
-            (
-                symbol.contains("FREE") ||
-                    symbol.contains("IRR") ||
-                    symbol.contains("IRT")
-                ) &&
-            it.name.contains("درهم")
-    }
-}
-
-/*
- * دریافت اونس از JSON رسمی API.
- * این تابع در Dispatchers.IO فراخوانی می‌شود.
- */
-private fun fetchGoldOunce(): Double {
-    val json = JSONObject(readUrl(GOLD_URL))
-
-    val symbols = json.optJSONArray("symbols")
-        ?: throw IllegalStateException(
-            "پاسخ API فاقد آرایه symbols است"
-        )
-
-    val item = (0 until symbols.length())
-        .asSequence()
-        .mapNotNull { symbols.optJSONObject(it) }
-        .firstOrNull {
-            it.optString("symbol") == "XAU-USD-SPOT"
-        }
-        ?: throw IllegalStateException(
-            "نماد XAU-USD-SPOT در پاسخ پیدا نشد"
-        )
-
-    if (item.optBoolean("is_stale", false)) {
-        throw IllegalStateException(
-            "منبع، داده اونس را قدیمی اعلام کرده است"
-        )
-    }
-
-    val price = parsePriceValue(item.opt("price"))
-
-    if (!price.isFinite() || price !in 100.0..100000.0) {
-        throw IllegalStateException(
-            "قیمت اونس نامعتبر است"
-        )
-    }
-
-    return price
-}
-
-private fun quoteFromMarket(
-    id: String,
-    title: String,
-    flag: String,
-    market: MarketPrice?,
-    unit: String = "تومان"
-): Quote {
-    if (market == null) {
-        return Quote(
-            id = id,
-            title = title,
-            flag = flag,
-            price = "داده در دسترس نیست",
-            unit = unit,
-            source = "Iran Market Data",
-            status = "نماد معتبر این قیمت در داده‌های دریافتی پیدا نشد"
-        )
-    }
-
-    return Quote(
-        id = id,
-        title = title,
-        flag = flag,
-        price = fmt(market.price),
-        unit = unit,
-        source = market.source,
-        status = buildString {
-            append(
-                if (market.stale) {
-                    "هشدار: منبع داده را قدیمی اعلام کرده"
-                } else {
-                    "داده دریافت شد؛ قدیمی بودن مستقل بررسی نشده"
-                }
-            )
-
-            if (market.timestamp.isNotBlank()) {
-                append(" | ")
-                append(market.timestamp)
-            }
-        }
-    )
-}
-
-private fun buildMarketQuotes(
-    prices: List<MarketPrice>
-): List<Quote> {
-    val usd = findPrice(
-        prices,
-        "USD_IRR_FREE",
-        "USD_IRT_FREE"
-    )
-
-    val aed = findAed(prices)
-
-    val gold18 = findPrice(
-        prices,
-        "GOLD_18K_IRR",
-        "GOLD18_IRR",
-        "GOLD_18K"
-    )
-
-    val tether = findPrice(
-        prices,
-        "USDT_IRR",
-        "USDT_IRR_FREE"
-    )
-
-    val calculatedUsd = aed?.let {
-        calculateUsdFromAed(it.price)
-    }
-
-    val result = mutableListOf<Quote>()
-
-    result += quoteFromMarket(
-        id = "usd",
-        title = "دلار آزاد",
-        flag = "🇺🇸",
-        market = usd
-    )
-
-    result += quoteFromMarket(
-        id = "aed",
-        title = "درهم بازار",
-        flag = "🇦🇪",
-        market = aed
-    )
-
-    result += Quote(
-        id = "usd_calc",
-        title = "دلار محاسباتی از درهم",
-        flag = "🧮",
-        price = calculatedUsd?.let { fmt(it) }
-            ?: "قابل محاسبه نیست",
-        unit = "تومان",
-        source = "قیمت درهم بازار × 3.6725",
-        status = if (calculatedUsd != null) {
-            "محاسبه بر اساس قیمت دریافت‌شده درهم"
-        } else {
-            "برای محاسبه، قیمت معتبر درهم لازم است"
-        }
-    )
-
-    val diffPercent = if (
-        usd != null &&
-        calculatedUsd != null &&
-        calculatedUsd > 0.0
-    ) {
-        (usd.price - calculatedUsd) / calculatedUsd * 100.0
-    } else {
+private suspend fun fetchBitcoin(): Double? = withContext(Dispatchers.IO) {
+    try {
+        getJson("https://api.gold-api.com/price/BTC")
+            .optDouble("price", Double.NaN)
+            .takeIf { it.isFinite() && it > 0.0 }
+    } catch (_: Exception) {
         null
     }
-
-    result += Quote(
-        id = "diff",
-        title = "اختلاف دلار مستقیم با محاسباتی",
-        flag = "📊",
-        price = diffPercent?.let { "${fmt(it, 2)}٪" }
-            ?: "قابل محاسبه نیست",
-        unit = "درصد",
-        source = "مقایسه دلار آزاد با دلار محاسباتی از درهم",
-        status = "اختلاف درصدی؛ نه نرخ خریدوفروش"
-    )
-
-    result += quoteFromMarket(
-        id = "gold18",
-        title = "طلای ۱۸ عیار (هر گرم)",
-        flag = "🪙",
-        market = gold18
-    )
-
-    result += quoteFromMarket(
-        id = "usdt",
-        title = "تتر بازار ایران",
-        flag = "₮",
-        market = tether
-    )
-
-    // منبع مستقل و معتبر قیمت دلار هرات هنوز متصل نشده است.
-    result += Quote(
-        id = "herat",
-        title = "دلار هرات",
-        flag = "🇦🇫",
-        price = "داده در دسترس نیست",
-        unit = "تومان",
-        source = "منبع مستقل بازار هرات متصل نشده",
-        status = "از نرخ رسمی ارز به‌تنهایی قابل تعیین نیست"
-    )
-
-    // قیمت دینار ایران با قیمت دلار در عراق یکسان نیست.
-    result += Quote(
-        id = "iraq",
-        title = "بازار عراق",
-        flag = "🇮🇶",
-        price = "داده در دسترس نیست",
-        unit = "تومان",
-        source = "منبع مستقل بازار عراق متصل نشده",
-        status = "برای نمایش قیمت بازار به داده واقعی نیاز است"
-    )
-
-    return result
-}
-
-private fun buildGoldQuote(
-    result: Result<Double>
-): Quote {
-    val price = result.getOrNull()
-
-    return Quote(
-        id = "ounce",
-        title = "اونس جهانی طلا",
-        flag = "🥇",
-        price = price?.let {
-            "$" + fmt(it, 2)
-        } ?: "دریافت ناموفق",
-        unit = "دلار / اونس تروا",
-        source = "GoldPrice.dev API",
-        status = if (price != null) {
-            "دریافت موفق؛ نسخه رایگان ممکن است تا ۱۵ دقیقه تأخیر داشته باشد"
-        } else {
-            result.exceptionOrNull()?.message
-                ?: "خطای نامشخص در دریافت قیمت اونس"
-        }
-    )
-}
-
-private fun mergeQuotes(
-    old: List<Quote>,
-    updates: List<Quote>
-): List<Quote> {
-    val updateMap = updates.associateBy { it.id }
-    val oldIds = old.map { it.id }.toSet()
-
-    val mergedOld = old.map { quote ->
-        updateMap[quote.id] ?: quote
-    }
-
-    val newItems = updates.filter {
-        it.id !in oldIds
-    }
-
-    return mergedOld + newItems
-}
-
-private fun nowTime(): String {
-    return SimpleDateFormat(
-        "HH:mm:ss",
-        Locale("fa", "IR")
-    ).format(Date())
 }
 
 @Composable
 private fun ArzNetScreen() {
-    var quotes by remember {
-        mutableStateOf<List<Quote>>(emptyList())
-    }
+    var quotes by remember { mutableStateOf(emptyList<Quote>()) }
+    var loading by remember { mutableStateOf(false) }
+    var lastUpdated by remember { mutableStateOf<String?>(null) }
+    var message by remember { mutableStateOf("در حال دریافت قیمت‌ها…") }
+    var refreshTrigger by remember { mutableIntStateOf(0) }
 
-    var loading by remember {
-        mutableStateOf(false)
-    }
-
-    var lastUpdated by remember {
-        mutableStateOf("هنوز دریافت نشده")
-    }
-
-    var marketUpdated by remember {
-        mutableStateOf("هنوز دریافت نشده")
-    }
-
-    var goldUpdated by remember {
-        mutableStateOf("هنوز دریافت نشده")
-    }
-
-    var refreshKey by remember {
-        mutableIntStateOf(0)
-    }
-
-    var errorMessage by remember {
-        mutableStateOf("")
-    }
-
-    LaunchedEffect(refreshKey) {
+    LaunchedEffect(refreshTrigger) {
         while (true) {
             loading = true
-            errorMessage = ""
+            try {
+                val feed = try {
+                    fetchIranFeed()
+                } catch (_: Exception) {
+                    FeedResult()
+                }
+                val (ounce, ounceSource) = fetchGoldOunce()
+                val btc = fetchBitcoin()
+                val usd = feed.usdToman
+                val next = mutableListOf<Quote>()
 
-            coroutineScope {
-                val marketJob = launch {
-                    val result = withContext(Dispatchers.IO) {
-                        runCatching {
-                            fetchAllPrices()
-                        }
-                    }
+                if (usd != null) next += Quote("usd", "دلار آزاد", "🇺🇸", usd, "تومان", "فید بازار ایران")
+                if (feed.tetherToman != null) {
+                    next += Quote("usdt", "تتر", "₮", feed.tetherToman, "تومان", "فید بازار ایران")
+                } else if (usd != null) {
+                    next += Quote("usdt-est", "تتر (برآوردی)", "₮", usd, "تومان", "برآورد بر پایه دلار آزاد",
+                        "قیمت مستقل تتر از منبع دریافت نشد.")
+                }
+                if (feed.aedToman != null) next += Quote("aed", "درهم امارات", "🇦🇪", feed.aedToman, "تومان", "فید بازار ایران")
+                if (feed.iqdToman != null) next += Quote("iqd", "دینار عراق", "🇮🇶", feed.iqdToman, "تومان", "فید بازار ایران؛ نماد IQD_IRR_FREE")
 
-                    val prices = result.getOrDefault(emptyList())
-
-                    if (prices.isNotEmpty()) {
-                        quotes = mergeQuotes(
-                            quotes,
-                            buildMarketQuotes(prices)
-                        )
-
-                        marketUpdated = nowTime()
-                    } else {
-                        errorMessage =
-                            "خطای دریافت بازار: " +
-                                (
-                                    result.exceptionOrNull()?.message
-                                        ?: "خطای نامشخص"
-                                    )
-                    }
+                if (ounce != null) next += Quote("ounce", "اونس جهانی طلا", "🌐", ounce, "دلار / اونس", ounceSource)
+                if (feed.gold18Toman != null) next += Quote("gold18", "طلای ۱۸ عیار", "🟡", feed.gold18Toman, "تومان / گرم", "فید بازار ایران")
+                if (feed.mesghalToman != null) {
+                    next += Quote("mesghal", "مثقال طلا", "🟡", feed.mesghalToman, "تومان / مثقال", "فید بازار ایران")
+                } else if (ounce != null && usd != null) {
+                    val estimated = ounce / OUNCE_GRAMS * usd * 17.0665 * (18.0 / 24.0)
+                    next += Quote("mesghal-est", "مثقال طلا (برآوردی)", "🟡", estimated, "تومان / مثقال",
+                        "محاسبه از اونس و دلار آزاد", "این عدد برآورد محاسباتی است، نه نرخ مستقل بازار.")
+                }
+                if (ounce != null && usd != null) {
+                    next += Quote("gold24", "طلای ۲۴ عیار (محاسباتی)", "🟡",
+                        ounce / OUNCE_GRAMS * usd, "تومان / گرم", "محاسبه از اونس و دلار آزاد")
+                }
+                if (btc != null) next += Quote("btc", "بیت‌کوین", "₿", btc, "دلار", "Gold-API")
+                if (btc != null && usd != null) {
+                    next += Quote("btc-irr", "بیت‌کوین (برآورد ریالی)", "₿", btc * usd, "تومان", "محاسبه از BTC/USD و دلار آزاد")
                 }
 
-                val goldJob = launch {
-                    val result = withContext(Dispatchers.IO) {
-                        runCatching {
-                            fetchGoldOunce()
-                        }
-                    }
-
-                    quotes = mergeQuotes(
-                        quotes,
-                        listOf(buildGoldQuote(result))
-                    )
-
-                    goldUpdated = nowTime()
+                quotes = next.map { fresh ->
+                    val old = quotes.firstOrNull { it.id == fresh.id }
+                    fresh.copy(history = (old?.history.orEmpty() + listOfNotNull(fresh.price)).takeLast(96))
                 }
-
-                joinAll(marketJob, goldJob)
+                lastUpdated = SimpleDateFormat("HH:mm:ss", Locale("fa", "IR")).format(Date())
+                message = if (next.isEmpty()) {
+                    "قیمت زنده دریافت نشد؛ اتصال اینترنت یا منبع داده را بررسی کنید."
+                } else ""
+            } catch (_: Exception) {
+                message = "دریافت قیمت‌ها با مشکل مواجه شد؛ بعداً دوباره تلاش می‌کنیم."
+            } finally {
+                loading = false
             }
-
-            lastUpdated = nowTime()
-            loading = false
-
             delay(REFRESH_MS)
         }
     }
 
-    Scaffold(
-        topBar = {
-            Surface(color = Navy) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+    Column(Modifier.fillMaxSize().background(Page)) {
+        Column(Modifier.fillMaxWidth().background(Navy).padding(horizontal = 20.dp, vertical = 22.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("ARZ-NET", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                    Text("قیمت لحظه‌ای بازارهای مالی", color = Color(0xFFCAD5E8), fontSize = 13.sp)
+                }
+                Box(
+                    Modifier.size(48.dp).clip(RoundedCornerShape(15.dp)).background(Blue),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Column {
-                        Text(
-                            text = "ARZ-NET",
-                            color = Color.White,
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        Text(
-                            text = "رصد بازار ارز و طلا",
-                            color = Color(0xFFD6E2F5),
-                            fontSize = 13.sp
-                        )
-                    }
-
-                    IconButton(
-                        onClick = {
-                            refreshKey++
-                        }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "به‌روزرسانی",
-                            tint = Color.White
-                        )
-                    }
+                    Icon(Icons.Default.ShowChart, contentDescription = "ARZ-NET", tint = Color.White, modifier = Modifier.size(28.dp))
                 }
             }
-        },
-        containerColor = Page
-    ) { padding ->
+            Spacer(Modifier.height(18.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("نمای کلی بازار", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text(lastUpdated?.let { "آخرین به‌روزرسانی: $it" } ?: "در انتظار دریافت داده",
+                        color = Color(0xFFCAD5E8), fontSize = 12.sp)
+                }
+                FilledTonalButton(
+                    onClick = { refreshTrigger++ },
+                    enabled = !loading,
+                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color.White, contentColor = Navy)
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text(if (loading) "در حال دریافت" else "بروزرسانی")
+                }
+            }
+        }
+
+        if (message.isNotBlank()) {
+            Text(message, color = if (quotes.isEmpty()) Red else Navy,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                textAlign = TextAlign.Center, fontSize = 13.sp)
+        }
+        Text("نرخ‌ها هر ۱۵ ثانیه بررسی می‌شوند؛ سرعت تغییر به منبع داده وابسته است.",
+            color = Color(0xFF64748B), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+
         LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(11.dp)
         ) {
+            items(quotes, key = { it.id }) { quote -> QuoteCard(quote) }
             item {
-                Surface(
-                    color = Color.White,
-                    shape = RoundedCornerShape(18.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        Text(
-                            text = "داشبورد قیمت‌ها",
-                            color = Navy,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        Spacer(Modifier.height(8.dp))
-
-                        Text(
-                            text = "آخرین تکمیل بررسی: $lastUpdated",
-                            color = Gray,
-                            fontSize = 12.sp
-                        )
-
-                        Text(
-                            text = "آخرین دریافت بازار: $marketUpdated",
-                            color = Gray,
-                            fontSize = 12.sp
-                        )
-
-                        Text(
-                            text = "آخرین بررسی اونس: $goldUpdated",
-                            color = Gray,
-                            fontSize = 12.sp
-                        )
-
-                        Spacer(Modifier.height(5.dp))
-
-                        Text(
-                            text = if (loading) {
-                                "در حال بررسی منابع قیمت…"
-                            } else {
-                                "بررسی خودکار هر ۱۵ ثانیه"
-                            },
-                            color = Blue,
-                            fontSize = 12.sp
-                        )
-
-                        if (errorMessage.isNotBlank()) {
-                            Spacer(Modifier.height(8.dp))
-
-                            Text(
-                                text = errorMessage,
-                                color = Red,
-                                fontSize = 12.sp
-                            )
-                        }
-                    }
-                }
-            }
-
-            items(
-                items = quotes,
-                key = { it.id }
-            ) { quote ->
-                QuoteCard(quote)
+                Text("نمودارها از زمان اجرای برنامه و از دریافت‌های موفق جمع‌آوری می‌شوند؛ تاریخچه کامل ۲۴ ساعته نیست.",
+                    color = Color(0xFF64748B), fontSize = 11.sp,
+                    modifier = Modifier.padding(top = 6.dp, bottom = 12.dp))
             }
         }
     }
@@ -802,83 +304,66 @@ private fun ArzNetScreen() {
 
 @Composable
 private fun QuoteCard(quote: Quote) {
-    val isError =
-        quote.price.contains("نیست") ||
-            quote.price.contains("نمی‌شود") ||
-            quote.price.contains("استخراج") ||
-            quote.price.contains("ناموفق") ||
-            quote.price.contains("قابل محاسبه") ||
-            quote.status.contains("خطا") ||
-            quote.status.contains("لازم است") ||
-            quote.status.contains("متصل نشده") ||
-            quote.status.contains("ناموفق") ||
-            quote.status.contains("قدیمی اعلام کرده")
+    val previous = quote.history.getOrNull(quote.history.lastIndex - 1)
+    val current = quote.price
+    val change = if (current != null && previous != null && previous != 0.0) {
+        (current - previous) / previous * 100.0
+    } else null
+    val changeColor = if (change != null && change < 0) Red else Green
 
-    Surface(
-        color = Color.White,
-        shape = RoundedCornerShape(18.dp),
+    Card(
         modifier = Modifier.fillMaxWidth(),
-        shadowElevation = 1.dp
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = quote.flag,
-                    fontSize = 27.sp
-                )
-
-                Spacer(Modifier.width(10.dp))
-
-                Column(
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        text = quote.title,
-                        color = Navy,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Text(
-                        text = quote.unit,
-                        color = Gray,
-                        fontSize = 12.sp
-                    )
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(44.dp).clip(CircleShape).background(Color(0xFFF0F5FF)), contentAlignment = Alignment.Center) {
+                    Text(quote.flag, fontSize = 22.sp)
                 }
-
-                Text(
-                    text = quote.price,
-                    color = if (isError) Red else Green,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.End
-                )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(quote.title, fontWeight = FontWeight.SemiBold, color = Navy, fontSize = 15.sp)
+                    Text(quote.source, color = Color(0xFF778399), fontSize = 11.sp)
+                }
+                if (change != null) {
+                    Text("${if (change >= 0) "+" else ""}${fmt(change, 2)}٪",
+                        color = changeColor, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                }
             }
-
-            Spacer(Modifier.height(8.dp))
-
-            HorizontalDivider(color = Page)
-
-            Spacer(Modifier.height(8.dp))
-
-            Text(
-                text = "منبع: ${quote.source}",
-                color = Gray,
-                fontSize = 11.sp
-            )
-
-            Spacer(Modifier.height(4.dp))
-
-            Text(
-                text = "وضعیت: ${quote.status}",
-                color = if (isError) Red else Gray,
-                fontSize = 11.sp
-            )
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.Bottom) {
+                Column(Modifier.weight(1f)) {
+                    Text(current?.let { fmt(it, 2) } ?: "ناموجود",
+                        fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Navy)
+                    Text(quote.unit, color = Color(0xFF64748B), fontSize = 12.sp)
+                }
+                if (quote.history.size >= 2) {
+                    Sparkline(quote.history, Modifier.width(104.dp).height(38.dp), changeColor)
+                }
+            }
+            if (quote.note.isNotBlank()) {
+                Spacer(Modifier.height(7.dp))
+                Text(quote.note, color = Color(0xFF7A8496), fontSize = 11.sp)
+            }
         }
+    }
+}
+
+@Composable
+private fun Sparkline(values: List<Double>, modifier: Modifier = Modifier, color: Color = Blue) {
+    Canvas(modifier = modifier) {
+        if (values.size < 2) return@Canvas
+        val minValue = values.minOrNull() ?: return@Canvas
+        val maxValue = values.maxOrNull() ?: return@Canvas
+        val range = (maxValue - minValue).takeIf { it > 0.0 } ?: 1.0
+        val path = Path()
+        values.forEachIndexed { index, value ->
+            val x = size.width * index / (values.size - 1).toFloat()
+            val y = size.height - ((value - minValue) / range).toFloat() * size.height
+            if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        drawPath(path, color = color, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f))
     }
 }
