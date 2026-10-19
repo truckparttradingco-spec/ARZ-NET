@@ -1,3 +1,4 @@
+
 name: Build ARZ-NET APK
 
 on:
@@ -17,11 +18,27 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Set up Java
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
+
+      - name: Check Java version
+        run: |
+          java -version
+          echo "JAVA_HOME=$JAVA_HOME"
+
+      - name: Check project files
+        run: |
+          echo "Current commit:"
+          git rev-parse HEAD
+          echo "Project files:"
+          ls -la
+          echo "MainActivity.kt location:"
+          find app/src -name "MainActivity.kt" -print
+          echo "MainActivity.kt lines 1-140:"
+          nl -ba app/src/main/java/com/arznet/app/MainActivity.kt | sed -n '1,140p'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -29,10 +46,16 @@ jobs:
           gradle-version: "8.9"
 
       - name: Build debug APK
-        run: gradle assembleDebug
+        run: gradle assembleDebug --stacktrace
+
+      - name: Verify APK
+        run: |
+          test -f app/build/outputs/apk/debug/app-debug.apk
+          ls -lh app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: ARZ-NET-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
