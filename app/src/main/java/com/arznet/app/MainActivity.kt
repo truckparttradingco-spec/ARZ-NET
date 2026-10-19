@@ -46,8 +46,10 @@ private const val MARKET_URL =
 private const val ALL_MARKET_URL =
     "https://raw.githubusercontent.com/iran-market/iran-market.github.io/main/data/latest-toman.json"
 
+// API ساختاریافته اونس جهانی طلا
+// نسخه رایگان ممکن است تا 15 دقیقه تأخیر داشته باشد.
 private const val GOLD_URL =
-    "https://tradingeconomics.com/commodity/gold"
+    "https://api.goldprice.dev/v1/prices?symbol=XAU-USD-SPOT"
 
 private val Navy = Color(0xFF12213A)
 private val Blue = Color(0xFF2563EB)
@@ -105,8 +107,8 @@ private fun fmt(value: Double, digits: Int = 0): String {
 }
 
 /*
- * ورودی و خروجی هر دو بر حسب تومان هستند.
- * قیمت هر درهم × تعداد درهم معادل یک دلار = قیمت دلار محاسباتی
+ * قیمت ورودی و خروجی بر حسب تومان است.
+ * قیمت هر درهم × 3.6725 = دلار محاسباتی به تومان
  */
 private fun calculateUsdFromAed(aedPriceToman: Double): Double {
     return aedPriceToman * AED_PER_USD
@@ -119,25 +121,28 @@ private fun calculateAedFromUsd(usdPriceToman: Double): Double {
 private fun readUrl(address: String): String {
     val connection = URL(address).openConnection() as HttpURLConnection
 
-    connection.connectTimeout = 10_000
-    connection.readTimeout = 10_000
+    connection.connectTimeout = 15_000
+    connection.readTimeout = 15_000
     connection.requestMethod = "GET"
     connection.instanceFollowRedirects = true
+
     connection.setRequestProperty(
         "User-Agent",
         "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/131.0 Mobile Safari/537.36"
     )
+    connection.setRequestProperty("Accept", "application/json,text/plain,*/*")
     connection.setRequestProperty("Cache-Control", "no-cache")
     connection.setRequestProperty("Pragma", "no-cache")
 
     try {
         val code = connection.responseCode
+
         if (code !in 200..299) {
-            throw IllegalStateException("HTTP $code")
+            throw IllegalStateException("خطای HTTP: $code")
         }
 
         return connection.inputStream
-            .bufferedReader()
+            .bufferedReader(Charsets.UTF_8)
             .use { it.readText() }
     } finally {
         connection.disconnect()
@@ -147,62 +152,94 @@ private fun readUrl(address: String): String {
 private fun parsePriceValue(value: Any?): Double {
     return when (value) {
         is Number -> value.toDouble()
+
         is String -> value
             .replace(",", "")
             .trim()
             .toDoubleOrNull() ?: Double.NaN
+
         else -> Double.NaN
+    }
+}
+
+/*
+ * پیمایش بازگشتی JSON برای پشتیبانی از:
+ *
+ * data: [...]
+ *
+ * و ساختار:
+ *
+ * data: {
+ *   categories: {
+ *     currency: [...],
+ *     commodity: [...]
+ *   }
+ * }
+ *
+ * همچنین اشیای تودرتوی دارای symbol و price پشتیبانی می‌شوند.
+ */
+private fun collectMarketItems(
+    value: Any?,
+    output: MutableList<JSONObject>
+) {
+    when (value) {
+        is JSONObject -> {
+            val symbol = value.optString("symbol").trim()
+
+            if (symbol.isNotBlank() && value.has("price")) {
+                output.add(value)
+                return
+            }
+
+            val keys = value.keys()
+
+            while (keys.hasNext()) {
+                val key = keys.next()
+                collectMarketItems(value.opt(key), output)
+            }
+        }
+
+        is JSONArray -> {
+            for (i in 0 until value.length()) {
+                collectMarketItems(value.opt(i), output)
+            }
+        }
     }
 }
 
 private fun parsePrices(jsonText: String): List<MarketPrice> {
     val root = JSONObject(jsonText)
+    val records = mutableListOf<JSONObject>()
 
-    val data: JSONArray = when (val d = root.opt("data")) {
-        is JSONArray -> d
-
-        is JSONObject -> {
-            val array = JSONArray()
-            val keys = d.keys()
-
-            while (keys.hasNext()) {
-                val key = keys.next()
-                val item = d.optJSONObject(key)
-
-                if (item != null) {
-                    if (!item.has("symbol")) {
-                        item.put("symbol", key)
-                    }
-                    array.put(item)
-                }
-            }
-
-            array
-        }
-
-        else -> throw IllegalStateException(
-            "ساختار JSON قیمت‌ها شناخته نشد"
-        )
-    }
+    collectMarketItems(
+        root.opt("data") ?: root,
+        records
+    )
 
     val result = mutableListOf<MarketPrice>()
 
-    for (i in 0 until data.length()) {
-        val item = data.optJSONObject(i) ?: continue
-
+    for (item in records) {
         val symbol = item.optString("symbol").trim()
-        val name = item.optString(
-            "name_fa",
-            item.optString("name", symbol)
-        )
+
+        val nameFa = item.optString("name_fa").trim()
+        val name = when {
+            nameFa.isNotBlank() -> nameFa
+            item.optString("name").isNotBlank() ->
+                item.optString("name")
+            item.optString("name_en").isNotBlank() ->
+                item.optString("name_en")
+            else -> symbol
+        }
 
         val price = parsePriceValue(item.opt("price"))
 
         if (
             symbol.isBlank() ||
             !price.isFinite() ||
-            price <= 0
-        ) continue
+            price <= 0.0
+        ) {
+            continue
+        }
 
         result += MarketPrice(
             symbol = symbol,
@@ -211,7 +248,9 @@ private fun parsePrices(jsonText: String): List<MarketPrice> {
             source = item.optString(
                 "source",
                 "Iran Market Data"
-            ),
+            ).ifBlank {
+                "Iran Market Data"
+            },
             timestamp = item.optString(
                 "timestamp_tehran",
                 item.optString("timestamp", "")
@@ -220,13 +259,16 @@ private fun parsePrices(jsonText: String): List<MarketPrice> {
         )
     }
 
+    // حذف نمادهای تکراری
     return result
+        .associateBy { it.symbol.uppercase(Locale.ROOT) }
+        .values
+        .toList()
 }
 
 /*
- * هر دو فایل بررسی می‌شوند.
- * popular.json برای نمادهای منتخب است؛ latest-toman.json
- * برای یافتن نمادهایی مانند درهم که در فایل منتخب نیستند.
+ * دریافت از هر دو فایل بازار.
+ * اطلاعات popular.json در صورت تکرار نماد اولویت دارد.
  */
 private fun fetchAllPrices(): List<MarketPrice> {
     val popularResult = runCatching {
@@ -240,7 +282,6 @@ private fun fetchAllPrices(): List<MarketPrice> {
     val popular = popularResult.getOrDefault(emptyList())
     val all = allResult.getOrDefault(emptyList())
 
-    // داده‌های فایل منتخب بر داده تکراری فایل کامل اولویت دارند.
     val combined = (all + popular)
         .associateBy { it.symbol.uppercase(Locale.ROOT) }
         .values
@@ -248,10 +289,15 @@ private fun fetchAllPrices(): List<MarketPrice> {
 
     if (combined.isEmpty()) {
         throw IllegalStateException(
-            "دریافت هر دو منبع قیمت ناموفق بود: " +
-                (popularResult.exceptionOrNull()?.message ?: "") +
-                " | " +
-                (allResult.exceptionOrNull()?.message ?: "")
+            "دریافت قیمت بازار ناموفق بود. " +
+                "popular: ${
+                    popularResult.exceptionOrNull()?.message
+                        ?: "بدون داده"
+                } | " +
+                "all: ${
+                    allResult.exceptionOrNull()?.message
+                        ?: "بدون داده"
+                }"
         )
     }
 
@@ -265,13 +311,15 @@ private fun findPrice(
     for (symbol in symbols) {
         prices.firstOrNull {
             it.symbol.equals(symbol, ignoreCase = true)
-        }?.let { return it }
+        }?.let {
+            return it
+        }
     }
+
     return null
 }
 
 private fun findAed(prices: List<MarketPrice>): MarketPrice? {
-    // فقط نمادهای مشخص درهم پذیرفته می‌شوند.
     val exact = findPrice(
         prices,
         "AED_IRR_FREE",
@@ -280,59 +328,60 @@ private fun findAed(prices: List<MarketPrice>): MarketPrice? {
         "AED_IRT"
     )
 
-    if (exact != null) return exact
+    if (exact != null) {
+        return exact
+    }
 
     return prices.firstOrNull {
         val symbol = it.symbol.uppercase(Locale.ROOT)
-        val name = it.name.lowercase(Locale.ROOT)
 
         symbol.startsWith("AED_") &&
             (
                 symbol.contains("FREE") ||
-                symbol.contains("IRR") ||
-                symbol.contains("IRT")
-            ) &&
-            name.contains("درهم")
+                    symbol.contains("IRR") ||
+                    symbol.contains("IRT")
+                ) &&
+            it.name.contains("درهم")
     }
 }
 
 /*
- * اونس فقط از Trading Economics خوانده می‌شود.
- * هیچ منبع جایگزینی برای اونس استفاده نمی‌شود.
+ * دریافت اونس از JSON رسمی API.
+ * این تابع در Dispatchers.IO فراخوانی می‌شود.
  */
 private fun fetchGoldOunce(): Double {
-    val html = readUrl(GOLD_URL)
+    val json = JSONObject(readUrl(GOLD_URL))
 
-    val patterns = listOf(
-        Regex(
-            """id=["']instrument-price-last["'][^>]*>\s*([\d,]+(?:\.\d+)?)""",
-            RegexOption.IGNORE_CASE
-        ),
-        Regex(
-            """class=["'][^"']*instrument-price-last[^"']*["'][^>]*>\s*([\d,]+(?:\.\d+)?)""",
-            RegexOption.IGNORE_CASE
-        ),
-        Regex(
-            """instrument-price-last.{0,200}?([\d,]{1,8}(?:\.\d+)?)""",
-            RegexOption.IGNORE_CASE
+    val symbols = json.optJSONArray("symbols")
+        ?: throw IllegalStateException(
+            "پاسخ API فاقد آرایه symbols است"
         )
-    )
 
-    for (pattern in patterns) {
-        val match = pattern.find(html) ?: continue
-
-        val price = match.groupValues[1]
-            .replace(",", "")
-            .toDoubleOrNull()
-
-        if (price != null && price in 100.0..100000.0) {
-            return price
+    val item = (0 until symbols.length())
+        .asSequence()
+        .mapNotNull { symbols.optJSONObject(it) }
+        .firstOrNull {
+            it.optString("symbol") == "XAU-USD-SPOT"
         }
+        ?: throw IllegalStateException(
+            "نماد XAU-USD-SPOT در پاسخ پیدا نشد"
+        )
+
+    if (item.optBoolean("is_stale", false)) {
+        throw IllegalStateException(
+            "منبع، داده اونس را قدیمی اعلام کرده است"
+        )
     }
 
-    throw IllegalStateException(
-        "قیمت اونس از صفحه Trading Economics استخراج نشد؛ ممکن است صفحه پویا باشد"
-    )
+    val price = parsePriceValue(item.opt("price"))
+
+    if (!price.isFinite() || price !in 100.0..100000.0) {
+        throw IllegalStateException(
+            "قیمت اونس نامعتبر است"
+        )
+    }
+
+    return price
 }
 
 private fun quoteFromMarket(
@@ -366,7 +415,7 @@ private fun quoteFromMarket(
                 if (market.stale) {
                     "هشدار: منبع داده را قدیمی اعلام کرده"
                 } else {
-                    "داده دریافت شد"
+                    "داده دریافت شد؛ قدیمی بودن مستقل بررسی نشده"
                 }
             )
 
@@ -381,12 +430,27 @@ private fun quoteFromMarket(
 private fun buildMarketQuotes(
     prices: List<MarketPrice>
 ): List<Quote> {
-    val usd = findPrice(prices, "USD_IRR_FREE")
-    val aed = findAed(prices)
-    val gold18 = findPrice(prices, "GOLD_18K_IRR")
-    val tether = findPrice(prices, "USDT_IRR")
+    val usd = findPrice(
+        prices,
+        "USD_IRR_FREE",
+        "USD_IRT_FREE"
+    )
 
-    // هر درهم به تومان × 3.6725 = دلار محاسباتی به تومان
+    val aed = findAed(prices)
+
+    val gold18 = findPrice(
+        prices,
+        "GOLD_18K_IRR",
+        "GOLD18_IRR",
+        "GOLD_18K"
+    )
+
+    val tether = findPrice(
+        prices,
+        "USDT_IRR",
+        "USDT_IRR_FREE"
+    )
+
     val calculatedUsd = aed?.let {
         calculateUsdFromAed(it.price)
     }
@@ -394,17 +458,17 @@ private fun buildMarketQuotes(
     val result = mutableListOf<Quote>()
 
     result += quoteFromMarket(
-        "usd",
-        "دلار آزاد",
-        "🇺🇸",
-        usd
+        id = "usd",
+        title = "دلار آزاد",
+        flag = "🇺🇸",
+        market = usd
     )
 
     result += quoteFromMarket(
-        "aed",
-        "درهم بازار",
-        "🇦🇪",
-        aed
+        id = "aed",
+        title = "درهم بازار",
+        flag = "🇦🇪",
+        market = aed
     )
 
     result += Quote(
@@ -425,7 +489,7 @@ private fun buildMarketQuotes(
     val diffPercent = if (
         usd != null &&
         calculatedUsd != null &&
-        calculatedUsd > 0
+        calculatedUsd > 0.0
     ) {
         (usd.price - calculatedUsd) / calculatedUsd * 100.0
     } else {
@@ -444,19 +508,20 @@ private fun buildMarketQuotes(
     )
 
     result += quoteFromMarket(
-        "gold18",
-        "طلای ۱۸ عیار (هر گرم)",
-        "🪙",
-        gold18
+        id = "gold18",
+        title = "طلای ۱۸ عیار (هر گرم)",
+        flag = "🪙",
+        market = gold18
     )
 
     result += quoteFromMarket(
-        "usdt",
-        "تتر بازار ایران",
-        "₮",
-        tether
+        id = "usdt",
+        title = "تتر بازار ایران",
+        flag = "₮",
+        market = tether
     )
 
+    // منبع مستقل و معتبر قیمت دلار هرات هنوز متصل نشده است.
     result += Quote(
         id = "herat",
         title = "دلار هرات",
@@ -467,6 +532,7 @@ private fun buildMarketQuotes(
         status = "از نرخ رسمی ارز به‌تنهایی قابل تعیین نیست"
     )
 
+    // قیمت دینار ایران با قیمت دلار در عراق یکسان نیست.
     result += Quote(
         id = "iraq",
         title = "بازار عراق",
@@ -474,28 +540,31 @@ private fun buildMarketQuotes(
         price = "داده در دسترس نیست",
         unit = "تومان",
         source = "منبع مستقل بازار عراق متصل نشده",
-        status = "برای قیمت بازار به داده واقعی نیاز است"
+        status = "برای نمایش قیمت بازار به داده واقعی نیاز است"
     )
 
     return result
 }
 
-private fun buildGoldQuote(result: Result<Double>): Quote {
+private fun buildGoldQuote(
+    result: Result<Double>
+): Quote {
     val price = result.getOrNull()
 
     return Quote(
         id = "ounce",
         title = "اونس جهانی طلا",
         flag = "🥇",
-        price = price?.let { "$" + fmt(it, 2) }
-            ?: "قیمت قابل استخراج نیست",
+        price = price?.let {
+            "$" + fmt(it, 2)
+        } ?: "دریافت ناموفق",
         unit = "دلار / اونس تروا",
-        source = GOLD_URL,
+        source = "GoldPrice.dev API",
         status = if (price != null) {
-            "دریافت از Trading Economics"
+            "دریافت موفق؛ نسخه رایگان ممکن است تا ۱۵ دقیقه تأخیر داشته باشد"
         } else {
             result.exceptionOrNull()?.message
-                ?: "استخراج قیمت ناموفق بود"
+                ?: "خطای نامشخص در دریافت قیمت اونس"
         }
     )
 }
@@ -511,7 +580,9 @@ private fun mergeQuotes(
         updateMap[quote.id] ?: quote
     }
 
-    val newItems = updates.filter { it.id !in oldIds }
+    val newItems = updates.filter {
+        it.id !in oldIds
+    }
 
     return mergedOld + newItems
 }
@@ -525,27 +596,45 @@ private fun nowTime(): String {
 
 @Composable
 private fun ArzNetScreen() {
-    var quotes by remember { mutableStateOf<List<Quote>>(emptyList()) }
-    var loading by remember { mutableStateOf(false) }
-    var lastUpdated by remember { mutableStateOf("هنوز دریافت نشده") }
-    var marketUpdated by remember { mutableStateOf("هنوز دریافت نشده") }
-    var goldUpdated by remember { mutableStateOf("هنوز دریافت نشده") }
-    var refreshKey by remember { mutableIntStateOf(0) }
-    var errorMessage by remember { mutableStateOf("") }
+    var quotes by remember {
+        mutableStateOf<List<Quote>>(emptyList())
+    }
+
+    var loading by remember {
+        mutableStateOf(false)
+    }
+
+    var lastUpdated by remember {
+        mutableStateOf("هنوز دریافت نشده")
+    }
+
+    var marketUpdated by remember {
+        mutableStateOf("هنوز دریافت نشده")
+    }
+
+    var goldUpdated by remember {
+        mutableStateOf("هنوز دریافت نشده")
+    }
+
+    var refreshKey by remember {
+        mutableIntStateOf(0)
+    }
+
+    var errorMessage by remember {
+        mutableStateOf("")
+    }
 
     LaunchedEffect(refreshKey) {
         while (true) {
             loading = true
             errorMessage = ""
 
-            /*
-             * بازار و اونس هم‌زمان درخواست می‌شوند.
-             * هر کدام زودتر برسد، همان بخش صفحه به‌روزرسانی می‌شود.
-             */
             coroutineScope {
                 val marketJob = launch {
                     val result = withContext(Dispatchers.IO) {
-                        runCatching { fetchAllPrices() }
+                        runCatching {
+                            fetchAllPrices()
+                        }
                     }
 
                     val prices = result.getOrDefault(emptyList())
@@ -555,6 +644,7 @@ private fun ArzNetScreen() {
                             quotes,
                             buildMarketQuotes(prices)
                         )
+
                         marketUpdated = nowTime()
                     } else {
                         errorMessage =
@@ -562,19 +652,22 @@ private fun ArzNetScreen() {
                                 (
                                     result.exceptionOrNull()?.message
                                         ?: "خطای نامشخص"
-                                )
+                                    )
                     }
                 }
 
                 val goldJob = launch {
                     val result = withContext(Dispatchers.IO) {
-                        runCatching { fetchGoldOunce() }
+                        runCatching {
+                            fetchGoldOunce()
+                        }
                     }
 
                     quotes = mergeQuotes(
                         quotes,
                         listOf(buildGoldQuote(result))
                     )
+
                     goldUpdated = nowTime()
                 }
 
@@ -600,24 +693,26 @@ private fun ArzNetScreen() {
                 ) {
                     Column {
                         Text(
-                            "ARZ-NET",
+                            text = "ARZ-NET",
                             color = Color.White,
                             fontSize = 24.sp,
                             fontWeight = FontWeight.Bold
                         )
 
                         Text(
-                            "رصد بازار ارز و طلا",
+                            text = "رصد بازار ارز و طلا",
                             color = Color(0xFFD6E2F5),
                             fontSize = 13.sp
                         )
                     }
 
                     IconButton(
-                        onClick = { refreshKey++ }
+                        onClick = {
+                            refreshKey++
+                        }
                     ) {
                         Icon(
-                            Icons.Default.Refresh,
+                            imageVector = Icons.Default.Refresh,
                             contentDescription = "به‌روزرسانی",
                             tint = Color.White
                         )
@@ -640,9 +735,11 @@ private fun ArzNetScreen() {
                     shape = RoundedCornerShape(18.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(Modifier.padding(16.dp)) {
+                    Column(
+                        modifier = Modifier.padding(16.dp)
+                    ) {
                         Text(
-                            "داشبورد قیمت‌ها",
+                            text = "داشبورد قیمت‌ها",
                             color = Navy,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold
@@ -651,19 +748,19 @@ private fun ArzNetScreen() {
                         Spacer(Modifier.height(8.dp))
 
                         Text(
-                            "آخرین تکمیل بررسی: $lastUpdated",
+                            text = "آخرین تکمیل بررسی: $lastUpdated",
                             color = Gray,
                             fontSize = 12.sp
                         )
 
                         Text(
-                            "آخرین دریافت بازار: $marketUpdated",
+                            text = "آخرین دریافت بازار: $marketUpdated",
                             color = Gray,
                             fontSize = 12.sp
                         )
 
                         Text(
-                            "آخرین بررسی اونس: $goldUpdated",
+                            text = "آخرین بررسی اونس: $goldUpdated",
                             color = Gray,
                             fontSize = 12.sp
                         )
@@ -671,7 +768,7 @@ private fun ArzNetScreen() {
                         Spacer(Modifier.height(5.dp))
 
                         Text(
-                            if (loading) {
+                            text = if (loading) {
                                 "در حال بررسی منابع قیمت…"
                             } else {
                                 "بررسی خودکار هر ۱۵ ثانیه"
@@ -684,7 +781,7 @@ private fun ArzNetScreen() {
                             Spacer(Modifier.height(8.dp))
 
                             Text(
-                                errorMessage,
+                                text = errorMessage,
                                 color = Red,
                                 fontSize = 12.sp
                             )
@@ -693,7 +790,10 @@ private fun ArzNetScreen() {
                 }
             }
 
-            items(quotes, key = { it.id }) { quote ->
+            items(
+                items = quotes,
+                key = { it.id }
+            ) { quote ->
                 QuoteCard(quote)
             }
         }
@@ -704,12 +804,15 @@ private fun ArzNetScreen() {
 private fun QuoteCard(quote: Quote) {
     val isError =
         quote.price.contains("نیست") ||
-        quote.price.contains("نمی‌شود") ||
-        quote.price.contains("استخراج") ||
-        quote.status.contains("خطا") ||
-        quote.status.contains("لازم است") ||
-        quote.status.contains("متصل نشده") ||
-        quote.status.contains("ناموفق")
+            quote.price.contains("نمی‌شود") ||
+            quote.price.contains("استخراج") ||
+            quote.price.contains("ناموفق") ||
+            quote.price.contains("قابل محاسبه") ||
+            quote.status.contains("خطا") ||
+            quote.status.contains("لازم است") ||
+            quote.status.contains("متصل نشده") ||
+            quote.status.contains("ناموفق") ||
+            quote.status.contains("قدیمی اعلام کرده")
 
     Surface(
         color = Color.White,
@@ -717,35 +820,39 @@ private fun QuoteCard(quote: Quote) {
         modifier = Modifier.fillMaxWidth(),
         shadowElevation = 1.dp
     ) {
-        Column(Modifier.padding(16.dp)) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    quote.flag,
+                    text = quote.flag,
                     fontSize = 27.sp
                 )
 
                 Spacer(Modifier.width(10.dp))
 
-                Column(Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
                     Text(
-                        quote.title,
+                        text = quote.title,
                         color = Navy,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold
                     )
 
                     Text(
-                        quote.unit,
+                        text = quote.unit,
                         color = Gray,
                         fontSize = 12.sp
                     )
                 }
 
                 Text(
-                    quote.price,
+                    text = quote.price,
                     color = if (isError) Red else Green,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
@@ -754,11 +861,13 @@ private fun QuoteCard(quote: Quote) {
             }
 
             Spacer(Modifier.height(8.dp))
+
             HorizontalDivider(color = Page)
+
             Spacer(Modifier.height(8.dp))
 
             Text(
-                "منبع: ${quote.source}",
+                text = "منبع: ${quote.source}",
                 color = Gray,
                 fontSize = 11.sp
             )
@@ -766,7 +875,7 @@ private fun QuoteCard(quote: Quote) {
             Spacer(Modifier.height(4.dp))
 
             Text(
-                "وضعیت: ${quote.status}",
+                text = "وضعیت: ${quote.status}",
                 color = if (isError) Red else Gray,
                 fontSize = 11.sp
             )
