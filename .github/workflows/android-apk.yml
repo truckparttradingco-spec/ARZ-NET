@@ -1,3 +1,4 @@
+
 name: Build and Release ARZ-NET
 
 on:
@@ -43,11 +44,20 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           gradle assembleRelease --stacktrace
-          test -f app/build/outputs/apk/release/app-release.apk
+          echo "Searching for release APK..."
+          find app/build/outputs -type f -name "*.apk" -print
+          APK_PATH="$(find app/build/outputs/apk/release -type f -name "*.apk" -print -quit)"
+          if [ -z "$APK_PATH" ]; then
+            echo "ERROR: Release APK was not found."
+            exit 1
+          fi
+          cp "$APK_PATH" app-release.apk
+          test -s app-release.apk
+          ls -lh app-release.apk
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: ARZ-NET ${{ github.ref_name }}
           generate_release_notes: true
-          files: app/build/outputs/apk/release/app-release.apk
+          files: app-release.apk
