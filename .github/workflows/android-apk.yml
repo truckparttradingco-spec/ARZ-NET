@@ -1,16 +1,16 @@
-
-name: Build and Release ARZ-NET
+name: Build ARZ-NET APK
 
 on:
+  workflow_dispatch:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
 
 permissions:
   contents: write
 
 jobs:
-  build-release:
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -21,43 +21,42 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
-
-      - name: Prepare signing key
+      - name: Create release keystore
+        shell: bash
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          test -n "$KEYSTORE_BASE64"
           echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/arznet-release.jks"
           test -s "$RUNNER_TEMP/arznet-release.jks"
 
-      - name: Build signed APK
+      - name: Build signed release APK
         env:
           KEYSTORE_PATH: ${{ runner.temp }}/arznet-release.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          TRADING_ECONOMICS_API_KEY: ${{ secrets.TRADING_ECONOMICS_API_KEY }}
         run: |
-          gradle assembleRelease --stacktrace
-          echo "Searching for release APK..."
-          find app/build/outputs -type f -name "*.apk" -print
-          APK_PATH="$(find app/build/outputs/apk/release -type f -name "*.apk" -print -quit)"
-          if [ -z "$APK_PATH" ]; then
-            echo "ERROR: Release APK was not found."
-            exit 1
-          fi
-          cp "$APK_PATH" app-release.apk
-          test -s app-release.apk
-          ls -lh app-release.apk
+          gradle assembleRelease
 
-      - name: Publish GitHub Release
+      - name: Verify APK signature
+        shell: bash
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --verbose "$APK"
+          mkdir -p release-files
+          cp "$APK" release-files/app-release.apk
+
+      - name: Publish APK release
         uses: softprops/action-gh-release@v2
         with:
-          name: ARZ-NET ${{ github.ref_name }}
-          generate_release_notes: true
-          files: app-release.apk
+          tag_name: v1.0.4
+          name: ARZ-NET v1.0.4
+          files: release-files/app-release.apk
+          overwrite_files: true
+          fail_on_unmatched_files: true
