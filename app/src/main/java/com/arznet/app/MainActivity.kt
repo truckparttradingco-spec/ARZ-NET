@@ -42,32 +42,12 @@ private val Blue = Color(0xFF2563EB)
 private val Page = Color(0xFFF4F6FA)
 private val Green = Color(0xFF15966A)
 private val Red = Color(0xFFD94747)
+private val Amber = Color(0xFFB7791F)
+private val Muted = Color(0xFF64748B)
 
 private const val REFRESH_MS = 15_000L
 private const val ENGINE_URL =
     "http://192.168.1.106:8000/quotes/current"
-
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        setContent {
-            CompositionLocalProvider(
-                LocalLayoutDirection provides LayoutDirection.Rtl
-            ) {
-                MaterialTheme(
-                    colorScheme = lightColorScheme(
-                        primary = Blue,
-                        background = Page,
-                        surface = Color.White
-                    )
-                ) {
-                    ArzNetScreen()
-                }
-            }
-        }
-    }
-}
 
 private data class Quote(
     val id: String,
@@ -76,8 +56,49 @@ private data class Quote(
     val price: Double?,
     val unit: String,
     val source: String,
-    val note: String = "",
+    val status: String = "unknown",
+    val ageSeconds: Long? = null,
+    val changePercent: Double? = null,
     val history: List<Double> = emptyList()
+)
+
+private data class QuoteDefinition(
+    val id: String,
+    val title: String,
+    val flag: String,
+    val unit: String,
+    val source: String
+)
+
+private val quoteDefinitions = listOf(
+    QuoteDefinition("usd_irr_toman", "دلار آزاد", "🇺🇸", "تومان", "بازار آزاد ایران"),
+    QuoteDefinition("eur_toman", "یورو", "🇪🇺", "تومان", "بازار آزاد ایران"),
+    QuoteDefinition("gbp_toman", "پوند انگلیس", "🇬🇧", "تومان", "بازار آزاد ایران"),
+    QuoteDefinition("aed_toman", "درهم امارات", "🇦🇪", "تومان", "بازار آزاد ایران"),
+    QuoteDefinition("cny_toman", "یوان چین", "🇨🇳", "تومان", "بازار آزاد ایران"),
+    QuoteDefinition("try_toman", "لیر ترکیه", "🇹🇷", "تومان", "بازار آزاد ایران"),
+    QuoteDefinition("cad_toman", "دلار کانادا", "🇨🇦", "تومان", "بازار آزاد ایران"),
+    QuoteDefinition("aud_toman", "دلار استرالیا", "🇦🇺", "تومان", "بازار آزاد ایران"),
+    QuoteDefinition("chf_toman", "فرانک سوئیس", "🇨🇭", "تومان", "بازار آزاد ایران"),
+    QuoteDefinition("sar_toman", "ریال عربستان", "🇸🇦", "تومان", "بازار آزاد ایران"),
+    QuoteDefinition("qar_toman", "ریال قطر", "🇶🇦", "تومان", "بازار آزاد ایران"),
+    QuoteDefinition("kwd_toman", "دینار کویت", "🇰🇼", "تومان", "بازار آزاد ایران"),
+    QuoteDefinition("omr_toman", "ریال عمان", "🇴🇲", "تومان", "بازار آزاد ایران"),
+    QuoteDefinition("iqd_toman", "دینار عراق", "🇮🇶", "تومان", "بازار آزاد ایران"),
+    QuoteDefinition("afn_toman", "افغانی افغانستان", "🇦🇫", "تومان", "بازار آزاد ایران"),
+    QuoteDefinition("rub_toman", "روبل روسیه", "🇷🇺", "تومان", "بازار آزاد ایران"),
+    QuoteDefinition("inr_toman", "روپیه هند", "🇮🇳", "تومان", "بازار آزاد ایران"),
+    QuoteDefinition("gold18_toman_per_gram", "طلای ۱۸ عیار", "🟡", "تومان / گرم", "بازار طلای ایران"),
+    QuoteDefinition("gold24_toman", "طلای ۲۴ عیار", "🟨", "تومان", "بازار طلای ایران"),
+    QuoteDefinition("gold_gram_toman", "قیمت هر گرم طلا", "✨", "تومان", "بازار طلای ایران"),
+    QuoteDefinition("gold_mesghal_toman", "مظنه طلا", "🟡", "تومان / مثقال", "بازار طلای ایران"),
+    QuoteDefinition("coin_bahar_toman", "سکه امامی / بهار آزادی", "🪙", "تومان", "بازار سکه ایران"),
+    QuoteDefinition("coin_half_toman", "نیم‌سکه", "🪙", "تومان", "بازار سکه ایران"),
+    QuoteDefinition("coin_quarter_toman", "ربع‌سکه", "🪙", "تومان", "بازار سکه ایران"),
+    QuoteDefinition("silver_toman", "نقره", "⚪", "تومان", "بازار فلزات"),
+    QuoteDefinition("usdt_toman", "تتر", "₮", "تومان", "بازار تتر ایران"),
+    QuoteDefinition("xau_usd", "اونس جهانی طلا", "🌐", "دلار / اونس", "بازار جهانی"),
+    QuoteDefinition("bitcoin_usd", "بیت‌کوین", "₿", "دلار", "CoinGecko")
 )
 
 private fun fmt(value: Double, digits: Int = 0): String =
@@ -87,14 +108,13 @@ private fun fmt(value: Double, digits: Int = 0): String =
     }.format(value)
 
 private fun getJson(url: String): JSONObject {
-    val connection =
-        (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 10_000
-            readTimeout = 10_000
-            setRequestProperty("Accept", "application/json")
-            setRequestProperty("User-Agent", "ARZ-NET-Android/1.1")
-        }
+    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"
+        connectTimeout = 10_000
+        readTimeout = 10_000
+        setRequestProperty("Accept", "application/json")
+        setRequestProperty("User-Agent", "ARZ-NET-Android/1.2")
+    }
 
     try {
         if (connection.responseCode !in 200..299) {
@@ -111,91 +131,65 @@ private fun getJson(url: String): JSONObject {
     }
 }
 
+private fun JSONObject.positiveDouble(key: String): Double? {
+    if (!has(key) || isNull(key)) return null
+
+    val value = optDouble(key, Double.NaN)
+    return value.takeIf { it.isFinite() && it > 0.0 }
+}
+
 private suspend fun fetchEngineQuotes(): List<Quote> =
     withContext(Dispatchers.IO) {
         val engine = getJson(ENGINE_URL)
-        val status = engine.optJSONObject("quote_status")
-            ?: JSONObject()
+        val statuses = engine.optJSONObject("quote_status") ?: JSONObject()
+        val sources = engine.optJSONObject("sources") ?: JSONObject()
 
-        fun isFresh(statusKey: String): Boolean {
-            return status.optString(statusKey) == "received"
-        }
-
-        fun price(key: String): Double? {
-            val value = engine.optDouble(key, Double.NaN)
-            return value.takeIf {
-                it.isFinite() && it > 0.0
-            }
-        }
+        // latest_market_rates شامل آخرین قیمت دریافت‌شده است.
+        // market_rates فقط نرخ‌هایی را شامل می‌شود که موتور آن‌ها را تازه تشخیص داده است.
+        val latest = engine.optJSONObject("latest_market_rates") ?: JSONObject()
+        val freshRates = engine.optJSONObject("market_rates") ?: JSONObject()
+        val changes = engine.optJSONObject("market_change_percent") ?: JSONObject()
 
         val result = mutableListOf<Quote>()
 
-        // نرخ دلار: فقط وقتی وضعیت دلار در موتور تازه باشد.
-        if (isFresh("usd_irr_toman")) {
-            val usd = price("usd_irr_toman")
-                ?: run {
-                    val buy = price("usd_buy_toman")
-                    val sell = price("usd_sell_toman")
+        for (definition in quoteDefinitions) {
+            val sourceInfo = sources.optJSONObject(definition.id) ?: JSONObject()
+            val status = statuses.optString(definition.id, "unknown")
+            val value = latest.positiveDouble(definition.id)
+                ?: freshRates.positiveDouble(definition.id)
+                ?: engine.positiveDouble(definition.id)
 
-                    if (buy != null && sell != null) {
-                        (buy + sell) / 2.0
-                    } else {
-                        buy ?: sell
-                    }
-                }
+            if (value == null) continue
 
-            if (usd != null) {
-                result += Quote(
-                    id = "usd",
-                    title = "دلار آزاد",
-                    flag = "🇺🇸",
-                    price = usd,
-                    unit = "تومان",
-                    source = "موتور ARZ-NET / HANSHA"
-                )
+            val age = if (sourceInfo.has("age_seconds") &&
+                !sourceInfo.isNull("age_seconds")
+            ) {
+                sourceInfo.optLong("age_seconds").coerceAtLeast(0L)
+            } else {
+                null
             }
-        }
 
-        // طلای ۱۸ عیار
-        if (isFresh("gold18_toman_per_gram")) {
-            price("gold18_toman_per_gram")?.let {
-                result += Quote(
-                    id = "gold18",
-                    title = "طلای ۱۸ عیار",
-                    flag = "🟡",
-                    price = it,
-                    unit = "تومان / گرم",
-                    source = "موتور ARZ-NET"
-                )
-            }
-        }
+            val change = changes.optDouble(
+                definition.id,
+                Double.NaN
+            ).takeIf { it.isFinite() }
 
-        // اونس جهانی طلا
-        if (isFresh("xau_usd")) {
-            price("xau_usd")?.let {
-                result += Quote(
-                    id = "ounce",
-                    title = "اونس جهانی طلا",
-                    flag = "🌐",
-                    price = it,
-                    unit = "دلار / اونس",
-                    source = "موتور ARZ-NET"
-                )
-            }
-        }
+            val provider = sourceInfo.optString(
+                "provider",
+                definition.source
+            )
 
-        // بیت‌کوین
-        if (isFresh("bitcoin_usd")) {
-            price("bitcoin_usd")?.let {
-                result += Quote(
-                    id = "btc",
-                    title = "بیت‌کوین",
-                    flag = "₿",
-                    price = it,
-                    unit = "دلار",
-                    source = "موتور ARZ-NET"
-                )
-            }
+            result += Quote(
+                id = definition.id,
+                title = definition.title,
+                flag = definition.flag,
+                price = value,
+                unit = definition.unit,
+                source = provider,
+                status = status,
+                ageSeconds = age,
+                changePercent = change
+            )
         }
 
         result
@@ -203,21 +197,13 @@ private suspend fun fetchEngineQuotes(): List<Quote> =
 
 @Composable
 private fun ArzNetScreen() {
-    var quotes by remember {
-        mutableStateOf(emptyList<Quote>())
-    }
-    var loading by remember {
-        mutableStateOf(false)
-    }
-    var lastUpdated by remember {
-        mutableStateOf<String?>(null)
-    }
+    var quotes by remember { mutableStateOf(emptyList<Quote>()) }
+    var loading by remember { mutableStateOf(false) }
+    var lastUpdated by remember { mutableStateOf<String?>(null) }
     var message by remember {
         mutableStateOf("در حال اتصال به موتور ARZ-NET…")
     }
-    var refreshTrigger by remember {
-        mutableIntStateOf(0)
-    }
+    var refreshTrigger by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(refreshTrigger) {
         while (true) {
@@ -227,10 +213,7 @@ private fun ArzNetScreen() {
                 val fetched = fetchEngineQuotes()
 
                 quotes = fetched.map { fresh ->
-                    val old = quotes.firstOrNull {
-                        it.id == fresh.id
-                    }
-
+                    val old = quotes.firstOrNull { it.id == fresh.id }
                     fresh.copy(
                         history = (
                             old?.history.orEmpty() +
@@ -245,13 +228,13 @@ private fun ArzNetScreen() {
                 ).format(Date())
 
                 message = if (fetched.isEmpty()) {
-                    "داده تازه در دسترس نیست؛ وضعیت منابع موتور را بررسی کنید."
+                    "قیمتی از API دریافت نشد؛ وضعیت موتور را بررسی کنید."
                 } else {
                     ""
                 }
             } catch (e: Exception) {
                 message =
-                    "اتصال به موتور برقرار نشد. روشن بودن سرور و اتصال وای‌فای را بررسی کنید."
+                    "اتصال به موتور برقرار نشد. سرور، آدرس IP و وای‌فای را بررسی کنید."
             } finally {
                 loading = false
             }
@@ -271,9 +254,7 @@ private fun ArzNetScreen() {
                 .background(Navy)
                 .padding(horizontal = 20.dp, vertical = 22.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(
                         "ARZ-NET",
@@ -282,7 +263,7 @@ private fun ArzNetScreen() {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        "قیمت لحظه‌ای بازارهای مالی",
+                        "قیمت ارز، طلا و بازارهای جهانی",
                         color = Color(0xFFCAD5E8),
                         fontSize = 13.sp
                     )
@@ -306,9 +287,7 @@ private fun ArzNetScreen() {
 
             Spacer(Modifier.height(18.dp))
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(
                         "نمای کلی بازار",
@@ -316,9 +295,8 @@ private fun ArzNetScreen() {
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        lastUpdated?.let {
-                            "آخرین دریافت: $it"
-                        } ?: "در انتظار دریافت داده",
+                        lastUpdated?.let { "آخرین دریافت: $it" }
+                            ?: "در انتظار دریافت داده",
                         color = Color(0xFFCAD5E8),
                         fontSize = 12.sp
                     )
@@ -338,10 +316,7 @@ private fun ArzNetScreen() {
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(Modifier.width(5.dp))
-                    Text(
-                        if (loading) "در حال دریافت"
-                        else "بروزرسانی"
-                    )
+                    Text(if (loading) "در حال دریافت" else "بروزرسانی")
                 }
             }
         }
@@ -359,13 +334,10 @@ private fun ArzNetScreen() {
         }
 
         Text(
-            "منبع داده: موتور ARZ-NET؛ به‌روزرسانی هر ۱۵ ثانیه",
-            color = Color(0xFF64748B),
+            "به‌روزرسانی خودکار هر ۱۵ ثانیه؛ تازگی قیمت وابسته به منبع است.",
+            color = Muted,
             fontSize = 11.sp,
-            modifier = Modifier.padding(
-                horizontal = 16.dp,
-                vertical = 4.dp
-            )
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
         )
 
         LazyColumn(
@@ -384,13 +356,10 @@ private fun ArzNetScreen() {
 
             item {
                 Text(
-                    "نمودارها از دریافت‌های موفق در همین اجرا ساخته می‌شوند و تاریخچه کامل ۲۴ ساعته نیست.",
-                    color = Color(0xFF64748B),
+                    "نمودار کوچک هر کارت از دریافت‌های موفق همین اجرای برنامه ساخته می‌شود؛ تاریخچه کامل ۲۴ ساعته نیست.",
+                    color = Muted,
                     fontSize = 11.sp,
-                    modifier = Modifier.padding(
-                        top = 6.dp,
-                        bottom = 12.dp
-                    )
+                    modifier = Modifier.padding(top = 6.dp, bottom = 12.dp)
                 )
             }
         }
@@ -399,38 +368,48 @@ private fun ArzNetScreen() {
 
 @Composable
 private fun QuoteCard(quote: Quote) {
-    val previous = quote.history.getOrNull(
-        quote.history.lastIndex - 1
-    )
+    val previous = quote.history.getOrNull(quote.history.lastIndex - 1)
     val current = quote.price
 
-    val change = if (
-        current != null &&
-        previous != null &&
-        previous != 0.0
+    val historyChange = if (
+        current != null && previous != null && previous != 0.0
     ) {
         (current - previous) / previous * 100.0
     } else {
         null
     }
 
-    val changeColor =
-        if (change != null && change < 0) Red else Green
+    // اگر API تغییر درصدی منبع را فرستاده باشد، آن را نشان می‌دهیم.
+    val shownChange = quote.changePercent ?: historyChange
+    val changeColor = when {
+        shownChange == null -> Muted
+        shownChange < 0 -> Red
+        else -> Green
+    }
+
+    val statusText = when (quote.status) {
+        "received", "fresh" -> "دریافت موفق"
+        "stale" -> "داده قدیمی"
+        "timestamp_unverified" -> "زمان تأیید نشده"
+        "timestamp_in_future" -> "زمان نامعتبر"
+        "unknown" -> "وضعیت نامشخص"
+        else -> quote.status
+    }
+
+    val statusColor = when (quote.status) {
+        "received", "fresh" -> Green
+        "stale", "timestamp_unverified" -> Amber
+        else -> Red
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color.White
-        ),
-        elevation = CardDefaults.cardElevation(
-            defaultElevation = 1.dp
-        )
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(Modifier.padding(16.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier
                         .size(44.dp)
@@ -452,26 +431,32 @@ private fun QuoteCard(quote: Quote) {
                     )
                     Text(
                         quote.source,
-                        color = Color(0xFF778399),
+                        color = Muted,
                         fontSize = 11.sp
                     )
                 }
 
-                if (change != null) {
+                Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        "${if (change >= 0) "+" else ""}${fmt(change, 2)}٪",
-                        color = changeColor,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp
+                        statusText,
+                        color = statusColor,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 11.sp
                     )
+                    if (shownChange != null) {
+                        Text(
+                            "${if (shownChange >= 0) "+" else ""}${fmt(shownChange, 2)}٪",
+                            color = changeColor,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 12.sp
+                        )
+                    }
                 }
             }
 
             Spacer(Modifier.height(12.dp))
 
-            Row(
-                verticalAlignment = Alignment.Bottom
-            ) {
+            Row(verticalAlignment = Alignment.Bottom) {
                 Column(Modifier.weight(1f)) {
                     Text(
                         current?.let { fmt(it, 2) } ?: "ناموجود",
@@ -481,7 +466,7 @@ private fun QuoteCard(quote: Quote) {
                     )
                     Text(
                         quote.unit,
-                        color = Color(0xFF64748B),
+                        color = Muted,
                         fontSize = 12.sp
                     )
                 }
@@ -497,15 +482,23 @@ private fun QuoteCard(quote: Quote) {
                 }
             }
 
-            if (quote.note.isNotBlank()) {
-                Spacer(Modifier.height(7.dp))
+            quote.ageSeconds?.let { age ->
+                Spacer(Modifier.height(6.dp))
                 Text(
-                    quote.note,
-                    color = Color(0xFF7A8496),
+                    "سن داده: ${formatAge(age)}",
+                    color = if (age > 1800) Amber else Muted,
                     fontSize = 11.sp
                 )
             }
         }
+    }
+}
+
+private fun formatAge(seconds: Long): String {
+    return when {
+        seconds < 60 -> "$seconds ثانیه"
+        seconds < 3600 -> "${seconds / 60} دقیقه"
+        else -> "${seconds / 3600} ساعت و ${(seconds % 3600) / 60} دقیقه"
     }
 }
 
@@ -518,35 +511,23 @@ private fun Sparkline(
     Canvas(modifier = modifier) {
         if (values.size < 2) return@Canvas
 
-        val minValue = values.minOrNull()
-            ?: return@Canvas
-        val maxValue = values.maxOrNull()
-            ?: return@Canvas
-        val range = (maxValue - minValue)
-            .takeIf { it > 0.0 } ?: 1.0
-
+        val minValue = values.minOrNull() ?: return@Canvas
+        val maxValue = values.maxOrNull() ?: return@Canvas
+        val range = (maxValue - minValue).takeIf { it > 0.0 } ?: 1.0
         val path = Path()
 
         values.forEachIndexed { index, value ->
-            val x = size.width * index /
-                (values.size - 1).toFloat()
+            val x = size.width * index / (values.size - 1).toFloat()
             val y = size.height -
-                ((value - minValue) / range).toFloat() *
-                size.height
+                ((value - minValue) / range).toFloat() * size.height
 
-            if (index == 0) {
-                path.moveTo(x, y)
-            } else {
-                path.lineTo(x, y)
-            }
+            if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
         }
 
         drawPath(
-            path,
+            path = path,
             color = color,
-            style = androidx.compose.ui.graphics.drawscope.Stroke(
-                width = 3f
-            )
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f)
         )
     }
 }
