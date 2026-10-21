@@ -1,3 +1,4 @@
+
 name: Build ARZ-NET APK
 
 on:
@@ -38,8 +39,7 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           TRADING_ECONOMICS_API_KEY: ${{ secrets.TRADING_ECONOMICS_API_KEY }}
-        run: |
-          gradle assembleRelease
+        run: gradle assembleRelease
 
       - name: Verify APK signature
         shell: bash
@@ -52,6 +52,14 @@ jobs:
           "$APKSIGNER" verify --print-certs "$APK"
           mkdir -p release-files
           cp "$APK" release-files/app-release.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ARZ-NET-APK
+          path: release-files/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Publish APK release
         uses: softprops/action-gh-release@v2
