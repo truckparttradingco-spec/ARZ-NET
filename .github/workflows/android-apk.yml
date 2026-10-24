@@ -26,6 +26,16 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses || true
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
       - name: Install Gradle 8.9
         shell: bash
         run: |
@@ -33,12 +43,19 @@ jobs:
           unzip -q gradle-8.9-bin.zip -d "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/gradle-8.9/bin" >> "$GITHUB_PATH"
 
+      - name: Verify build tools
+        run: |
+          java -version
+          gradle --version
+          sdkmanager --list_installed
+
       - name: Build debug APK
         env:
           TRADING_ECONOMICS_API_KEY: ${{ secrets.TRADING_ECONOMICS_API_KEY }}
-        run: gradle assembleDebug --no-daemon
+        run: |
+          gradle assembleDebug --no-daemon --stacktrace
 
-      - name: Verify APK exists
+      - name: Verify APK
         shell: bash
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
@@ -47,7 +64,7 @@ jobs:
           cp "$APK" release-files/ARZ-NET-debug.apk
           ls -lh release-files/ARZ-NET-debug.apk
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: ARZ-NET-debug-APK
