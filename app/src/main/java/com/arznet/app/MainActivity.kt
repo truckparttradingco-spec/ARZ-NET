@@ -37,6 +37,28 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            CompositionLocalProvider(
+                LocalLayoutDirection provides LayoutDirection.Rtl
+            ) {
+                MaterialTheme(
+                    colorScheme = lightColorScheme(
+                        primary = Blue,
+                        background = Page,
+                        surface = Color.White
+                    )
+                ) {
+                    ArzNetScreen()
+                }
+            }
+        }
+    }
+}
+
+
 private val Navy = Color(0xFF101D35)
 private val Blue = Color(0xFF2563EB)
 private val Page = Color(0xFFF4F6FA)
