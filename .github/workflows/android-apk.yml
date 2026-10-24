@@ -1,4 +1,3 @@
-
 name: Build ARZ-NET APK
 
 on:
@@ -8,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -24,51 +23,34 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-      - name: Create release keystore
+      - name: Install Gradle 8.9
         shell: bash
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/arznet-release.jks"
-          test -s "$RUNNER_TEMP/arznet-release.jks"
+          wget -q https://services.gradle.org/distributions/gradle-8.9-bin.zip
+          unzip -q gradle-8.9-bin.zip -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.9/bin" >> "$GITHUB_PATH"
 
-      - name: Build signed release APK
+      - name: Build debug APK
         env:
-          KEYSTORE_PATH: ${{ runner.temp }}/arznet-release.jks
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           TRADING_ECONOMICS_API_KEY: ${{ secrets.TRADING_ECONOMICS_API_KEY }}
-        run: gradle assembleRelease
+        run: gradle assembleDebug --no-daemon
 
-      - name: Verify APK signature
+      - name: Verify APK exists
         shell: bash
         run: |
-          APK="app/build/outputs/apk/release/app-release.apk"
-          test -f "$APK"
-          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-          test -n "$APKSIGNER"
-          "$APKSIGNER" verify --verbose "$APK"
-          "$APKSIGNER" verify --print-certs "$APK"
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
           mkdir -p release-files
-          cp "$APK" release-files/app-release.apk
+          cp "$APK" release-files/ARZ-NET-debug.apk
+          ls -lh release-files/ARZ-NET-debug.apk
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ARZ-NET-APK
-          path: release-files/app-release.apk
+          name: ARZ-NET-debug-APK
+          path: release-files/ARZ-NET-debug.apk
           if-no-files-found: error
           retention-days: 14
-
-      - name: Publish APK release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v1.0.4
-          name: ARZ-NET v1.0.4
-          files: release-files/app-release.apk
-          overwrite_files: true
-          fail_on_unmatched_files: true
