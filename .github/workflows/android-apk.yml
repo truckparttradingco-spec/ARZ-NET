@@ -23,18 +23,21 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Accept Android SDK licenses
+      - name: Configure Android SDK
         shell: bash
         run: |
-          yes | sdkmanager --licenses || true
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          yes | "$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager" --licenses || true
 
       - name: Install Android SDK packages
         shell: bash
         run: |
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          yes | sdkmanager --licenses
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
       - name: Install Gradle 8.9
         shell: bash
@@ -43,17 +46,10 @@ jobs:
           unzip -q gradle-8.9-bin.zip -d "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/gradle-8.9/bin" >> "$GITHUB_PATH"
 
-      - name: Verify build tools
-        run: |
-          java -version
-          gradle --version
-          sdkmanager --list_installed
-
       - name: Build debug APK
         env:
           TRADING_ECONOMICS_API_KEY: ${{ secrets.TRADING_ECONOMICS_API_KEY }}
-        run: |
-          gradle assembleDebug --no-daemon --stacktrace
+        run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Verify APK
         shell: bash
