@@ -32,6 +32,7 @@ import java.util.Locale
 import java.util.TimeZone
 
 private const val API_URL = "https://truckparttrading.com/price-list/chand/kwgt-proxy.php"
+private const val MAX_PRICE_AGE_SECONDS = 60L
 private val Bg = Color(0xFF101216)
 private val CardBg = Color(0xFF1B1F26)
 private val Blue = Color(0xFF79A9FF)
@@ -40,7 +41,7 @@ private val Muted = Color(0xFF9AA4B2)
 private val Green = Color(0xFF43D19E)
 private val Red = Color(0xFFFF7272)
 
-data class Quote(val key: String, val label: String, val price: Double?, val buy: Double?, val pct: Double?, val timestamp: String?)
+data class Quote(val key: String, val label: String, val price: Double?, val buy: Double?, val pct: Double?, val timestamp: String?, val fresh: Boolean)
 data class PriceData(val quotes: List<Quote>, val updatedAt: String?)
 
 class MainActivity : ComponentActivity() {
@@ -117,6 +118,16 @@ private fun QuoteCard(q: Quote) {
         }
         Spacer(Modifier.height(10.dp))
         Text(q.price?.let { "${num(it)} تومان" } ?: "قیمت در دسترس نیست", color = White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Text(
+            when {
+                q.price == null -> "قیمت دریافت نشد"
+                q.fresh -> "زنده • زمان قیمت کمتر از ۶۰ ثانیه"
+                q.timestamp == null -> "قدیمی/نامعتبر • زمان قیمت موجود نیست"
+                else -> "قدیمی • برای تصمیم مالی به قیمت زنده اتکا نکنید"
+            },
+            color = if (q.fresh) Green else Red,
+            fontSize = 11.sp
+        )
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(q.buy?.let { "خرید: ${num(it)} تومان" } ?: " ", color = Muted, fontSize = 12.sp)
@@ -141,17 +152,41 @@ private fun fetchPrices(): PriceData {
         val defs = listOf("usd" to "دلار آزاد", "emami" to "سکه امامی", "gram" to "طلای ۱۸ عیار (گرم)", "usdt" to "تتر")
         val quotes = defs.map { (key, label) ->
             val h = items.optJSONObject(key)?.optJSONObject("hansha")
-            Quote(key, label, h?.numOrNull("price"), h?.numOrNull("buy"), h?.numOrNull("pct"),
-                h?.optString("timestamp")?.takeIf { it.isNotBlank() && it != "null" })
+            val timestamp = h?.optString("timestamp")?.takeIf { it.isNotBlank() && it != "null" }
+            val price = h?.numOrNull("price")
+            Quote(key, label, price, h?.numOrNull("buy"), h?.numOrNull("pct"), timestamp,
+                fresh = price != null && isFresh(timestamp))
         }
         return PriceData(quotes, root.optString("updated_at").takeIf { it.isNotBlank() && it != "null" })
     } finally { c.disconnect() }
 }
 
-private fun JSONObject.numOrNull(k: String): Double? = if (isNull(k)) null else optDouble(k).takeIf { it.isFinite() }
-private fun num(v: Double) = DecimalFormat("#,##0.##").format(v)
-private fun formatTime(s: String): String = try {
-    val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
-    val d = parser.parse(s) ?: return s
-    SimpleDateFormat("HH:mm:ss", Locale("fa", "IR")).format(d)
-} catch (_: Exception) { s }
+private fun JSONObject.numOrNull(k: String): Double? = if (isNull(k)) null else optDouble(k).takeIf { it.isFinite() && it > 0.0 }
+private fun num(v: Double) = DecimalFormat("#,##0.##", java.text.DecimalFormatSymbols(Locale("fa", "IR"))).format(v)
+
+private fun isFresh(timestamp: String?): Boolean {
+    val time = parseTimestamp(timestamp) ?: return false
+    val age = (System.currentTimeMillis() - time) / 1000L
+    return age in 0..MAX_PRICE_AGE_SECONDS
+}
+
+private fun parseTimestamp(value: String?): Long? {
+    if (value.isNullOrBlank()) return null
+    val patterns = listOf("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", "yyyy-MM-dd'T'HH:mm:ss'Z'", "yyyy-MM-dd'T'HH:mm:ssXXX")
+    for (pattern in patterns) {
+        try {
+            val parser = SimpleDateFormat(pattern, Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+                isLenient = false
+            }
+            val parsed = parser.parse(value)
+            if (parsed != null) return parsed.time
+        } catch (_: Exception) { }
+    }
+    return null
+}
+
+private fun formatTime(s: String): String {
+    val d = parseTimestamp(s) ?: return "نامشخص"
+    return SimpleDateFormat("HH:mm:ss", Locale("fa", "IR")).format(Date(d))
+}

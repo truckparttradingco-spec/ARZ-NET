@@ -134,20 +134,21 @@ class MarketWidgetProvider : AppWidgetProvider() {
             val hasFresh = prices.quotes.any { it.price != null && it.fresh }
             val serverTime = prices.serverUpdatedAt?.let { formatTime(it) }
             val status = when {
-                hasStale -> "هشدار: قیمت قدیمی پنهان شده است"
-                hasFresh && serverTime != null -> "قیمت معتبر • پاسخ سرور $serverTime"
-                hasFresh -> "قیمت معتبر • داده‌ها تازه هستند"
-                else -> "قیمت معتبر در دسترس نیست"
+                hasStale && hasFresh -> "هشدار: قیمت‌های قدیمی با برچسب مشخص شده‌اند"
+                hasStale -> "هشدار: قیمت‌ها قدیمی‌اند؛ قیمت زنده موجود نیست"
+                hasFresh && serverTime != null -> "قیمت زنده • پاسخ سرور $serverTime"
+                hasFresh -> "قیمت زنده • عمر قیمت حداکثر ۶۰ ثانیه است"
+                else -> "قیمت زنده در دسترس نیست؛ زمان معتبر ≤ ۶۰ ثانیه لازم است"
             }
             views.setTextViewText(R.id.widget_status, status)
             manager.updateAppWidget(id, views)
         }
 
         private fun setPrice(views: RemoteViews, viewId: Int, price: Double?, fresh: Boolean) {
-            val text = if (price != null && fresh) {
-                "${formatNumber(price)} تومان"
-            } else {
-                "قیمت معتبر نیست"
+            val text = when {
+                price == null -> "قیمت دریافت نشد"
+                fresh -> "${formatNumber(price)} تومان"
+                else -> "${formatNumber(price)} تومان (قدیمی)"
             }
             views.setTextViewText(viewId, text)
         }
