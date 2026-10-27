@@ -31,7 +31,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
-private const val API_URL = "https://arznet-api.ahad-ronaghi66.workers.dev/quotes/current"
+private const val API_URL = "https://truckparttrading.com/price-list/chand/kwgt-proxy.php"
 private val Bg = Color(0xFF101216)
 private val CardBg = Color(0xFF1B1F26)
 private val Blue = Color(0xFF79A9FF)
@@ -40,7 +40,7 @@ private val Muted = Color(0xFF9AA4B2)
 private val Green = Color(0xFF43D19E)
 private val Red = Color(0xFFFF7272)
 
-data class Quote(val key: String, val label: String, val price: Double?, val buy: Double?, val pct: Double?, val timestamp: String?, val freshness: String)
+data class Quote(val key: String, val label: String, val price: Double?, val buy: Double?, val pct: Double?, val timestamp: String?)
 data class PriceData(val quotes: List<Quote>, val updatedAt: String?)
 
 class MainActivity : ComponentActivity() {
@@ -85,7 +85,7 @@ private fun PricesScreen() {
             }
         }
         Spacer(Modifier.height(6.dp))
-        Text("منبع داده: ARZ-NET Cloudflare Worker", color = Muted, fontSize = 12.sp)
+        Text("منبع قیمت: HANSHA", color = Muted, fontSize = 12.sp)
         Spacer(Modifier.height(14.dp))
 
         if (loading && data == null) {
@@ -99,7 +99,7 @@ private fun PricesScreen() {
         } else {
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(data!!.quotes) { QuoteCard(it) }
-                item { Text("دلار آزاد فقط وقتی تازه است که زمان ثبت قیمت حداکثر ۶۰ ثانیه باشد؛ برای سایر نرخ‌ها حد فعلی ۲ ساعت است. زمان نامشخص به معنی تأیید نشدن تازگی است.", color = Muted, fontSize = 11.sp) }
+                item { Text("مقایسه TGJU فعلاً فعال نیست؛ پاسخ سرور برای TGJU مقدار null برمی‌گرداند.", color = Muted, fontSize = 11.sp) }
             }
         }
         data?.updatedAt?.let { Text("به‌روزرسانی سرور: ${formatTime(it)}", Modifier.fillMaxWidth(), color = Muted, fontSize = 11.sp, textAlign = TextAlign.Center) }
@@ -113,7 +113,7 @@ private fun QuoteCard(q: Quote) {
     Column(Modifier.fillMaxWidth().background(CardBg, RoundedCornerShape(18.dp)).padding(16.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(q.label, color = White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            Text(q.freshness, color = when (q.freshness) { "تازه" -> Green; "قدیمی" -> Color(0xFFFFC857); else -> Red }, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("HANSHA", color = Blue, fontSize = 11.sp)
         }
         Spacer(Modifier.height(10.dp))
         Text(q.price?.let { "${num(it)} تومان" } ?: "قیمت در دسترس نیست", color = White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
@@ -133,59 +133,25 @@ private fun fetchPrices(): PriceData {
     try {
         val code = c.responseCode
         val stream = if (code in 200..299) c.inputStream else c.errorStream
-        val body = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+        val body = stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
         if (code !in 200..299) throw IllegalStateException("HTTP $code")
         val root = JSONObject(body)
-
-        // Current Cloudflare Worker schema: flat quote keys + quote_timestamps + market_change_percent.
-        val timestamps = root.optJSONObject("quote_timestamps") ?: JSONObject()
-        val changes = root.optJSONObject("market_change_percent") ?: JSONObject()
-        val defs = listOf(
-            Triple("usd_irr_toman", "دلار آزاد", "usd_buy_toman"),
-            Triple("coin_bahar_toman", "سکه بهار آزادی", ""),
-            Triple("gold18_toman_per_gram", "طلای ۱۸ عیار (گرم)", ""),
-            Triple("usdt_toman", "تتر", "")
-        )
-        val quotes = defs.map { (key, label, buyKey) ->
-            val price = root.numOrNull(key)
-            val buy = if (buyKey.isNotBlank()) root.numOrNull(buyKey) else null
-            val pct = changes.numOrNull(key)
-            val timestamp = timestampValue(timestamps, key)
-            val maxAgeSeconds = if (key == "usd_irr_toman") 60L else 7200L
-            val freshness = when {
-                price == null || price <= 0.0 -> "ناموجود"
-                timestamp == null -> "زمان نامشخص"
-                (System.currentTimeMillis() / 1000L) - timestamp.toLong() < -120L -> "زمان نامشخص"
-                (System.currentTimeMillis() / 1000L) - timestamp.toLong() <= maxAgeSeconds -> "تازه"
-                else -> "قدیمی"
-            }
-            Quote(key, label, price, buy, pct, timestamp, freshness)
+        if (!root.optBoolean("ok")) throw IllegalStateException(root.optString("error", "پاسخ نامعتبر سرور"))
+        val items = root.optJSONObject("items") ?: JSONObject()
+        val defs = listOf("usd" to "دلار آزاد", "emami" to "سکه امامی", "gram" to "طلای ۱۸ عیار (گرم)", "usdt" to "تتر")
+        val quotes = defs.map { (key, label) ->
+            val h = items.optJSONObject(key)?.optJSONObject("hansha")
+            Quote(key, label, h?.numOrNull("price"), h?.numOrNull("buy"), h?.numOrNull("pct"),
+                h?.optString("timestamp")?.takeIf { it.isNotBlank() && it != "null" })
         }
-        val asOf = root.optLong("as_of_unix", 0L).takeIf { it > 0L }?.toString()
-        return PriceData(quotes, asOf)
+        return PriceData(quotes, root.optString("updated_at").takeIf { it.isNotBlank() && it != "null" })
     } finally { c.disconnect() }
 }
 
-private fun JSONObject.numOrNull(k: String): Double? = if (!has(k) || isNull(k)) null else optDouble(k).takeIf { it.isFinite() }
-
-private fun timestampValue(obj: JSONObject, key: String): String? {
-    if (!obj.has(key) || obj.isNull(key)) return null
-    val raw = obj.opt(key)
-    val value = when (raw) {
-        is Number -> raw.toLong()
-        is String -> raw.toLongOrNull() ?: return null
-        else -> return null
-    }
-    if (value <= 0L) return null
-    // Normalize millisecond timestamps to seconds for freshness checks and display.
-    return (if (value >= 10_000_000_000L) value / 1000L else value).toString()
-}
+private fun JSONObject.numOrNull(k: String): Double? = if (isNull(k)) null else optDouble(k).takeIf { it.isFinite() }
 private fun num(v: Double) = DecimalFormat("#,##0.##").format(v)
 private fun formatTime(s: String): String = try {
-    val d = s.toLongOrNull()?.let { Date(if (it < 10_000_000_000L) it * 1000L else it) }
-        ?: run {
-            val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
-            parser.parse(s) ?: return s
-        }
+    val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+    val d = parser.parse(s) ?: return s
     SimpleDateFormat("HH:mm:ss", Locale("fa", "IR")).format(d)
 } catch (_: Exception) { s }
