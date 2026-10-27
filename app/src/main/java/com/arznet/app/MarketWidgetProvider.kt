@@ -39,7 +39,8 @@ private data class WidgetQuote(
 
 private data class WidgetPrices(
     val quotes: List<WidgetQuote>,
-    val serverUpdatedAt: String?
+    val serverUpdatedAt: String?,
+    val fromCache: Boolean = false
 )
 
 class MarketWidgetProvider : AppWidgetProvider() {
@@ -59,15 +60,18 @@ class MarketWidgetProvider : AppWidgetProvider() {
     }
 
     companion object {
-        fun refreshAll(context: Context) {
+        fun refreshAll(context: Context): Boolean {
             val manager = AppWidgetManager.getInstance(context)
             val component = ComponentName(context, MarketWidgetProvider::class.java)
             val ids = manager.getAppWidgetIds(component)
-            if (ids.isEmpty()) return
+            if (ids.isEmpty()) return true
 
             var errorMessage: String? = null
+            var liveFetchSucceeded = false
             val prices = try {
-                fetchWidgetPrices()
+                val result = fetchWidgetPrices(context)
+                liveFetchSucceeded = !result.fromCache
+                result
             } catch (e: Exception) {
                 android.util.Log.e("ARZNETWidget", "Price fetch failed", e)
                 val detail = e.message?.takeIf { it.isNotBlank() } ?: "No details"
@@ -75,6 +79,7 @@ class MarketWidgetProvider : AppWidgetProvider() {
                 null
             }
             ids.forEach { id -> render(context, manager, id, prices, errorMessage) }
+            return liveFetchSucceeded
         }
 
         private fun refreshInBackground(context: Context) {
@@ -125,17 +130,18 @@ class MarketWidgetProvider : AppWidgetProvider() {
             }
 
             val byKey = prices.quotes.associateBy { it.key }
-            setPrice(views, R.id.widget_usd_price, byKey["usd"]?.price, byKey["usd"]?.fresh == true)
-            setPrice(views, R.id.widget_gold_price, byKey["gram"]?.price, byKey["gram"]?.fresh == true)
-            setPrice(views, R.id.widget_coin_price, byKey["emami"]?.price, byKey["emami"]?.fresh == true)
-            setPrice(views, R.id.widget_usdt_price, byKey["usdt"]?.price, byKey["usdt"]?.fresh == true)
+            setPrice(views, R.id.widget_usd_price, byKey["usd"]?.price, !prices.fromCache && byKey["usd"]?.fresh == true)
+            setPrice(views, R.id.widget_gold_price, byKey["gram"]?.price, !prices.fromCache && byKey["gram"]?.fresh == true)
+            setPrice(views, R.id.widget_coin_price, byKey["emami"]?.price, !prices.fromCache && byKey["emami"]?.fresh == true)
+            setPrice(views, R.id.widget_usdt_price, byKey["usdt"]?.price, !prices.fromCache && byKey["usdt"]?.fresh == true)
 
-            val hasStale = prices.quotes.any { it.price != null && !it.fresh }
-            val hasFresh = prices.quotes.any { it.price != null && it.fresh }
+            val hasStale = prices.quotes.any { it.price != null && (!it.fresh || prices.fromCache) }
+            val hasFresh = prices.quotes.any { it.price != null && it.fresh && !prices.fromCache }
             val serverTime = prices.serverUpdatedAt?.let { formatTime(it) }
             val status = when {
-                hasStale && hasFresh -> "هشدار: قیمت‌های قدیمی با برچسب مشخص شده‌اند"
-                hasStale -> "هشدار: قیمت‌ها قدیمی‌اند؛ قیمت زنده موجود نیست"
+                prices.fromCache -> "اتصال برقرار نشد • قیمت ذخیره‌شده (قدیمی)"
+                hasStale && hasFresh -> "هشدار: بعضی قیمت‌ها قدیمی‌اند"
+                hasStale -> "هشدار: قیمت قدیمی است؛ قیمت زنده موجود نیست"
                 hasFresh && serverTime != null -> "قیمت زنده • پاسخ سرور $serverTime"
                 hasFresh -> "قیمت زنده • عمر قیمت حداکثر ۶۰ ثانیه است"
                 else -> "قیمت زنده در دسترس نیست؛ زمان معتبر ≤ ۶۰ ثانیه لازم است"
@@ -187,55 +193,72 @@ class MarketWidgetProvider : AppWidgetProvider() {
 class MarketWidgetWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
     override fun doWork(): Result {
         return try {
-            MarketWidgetProvider.refreshAll(applicationContext)
-            Result.success()
+            if (MarketWidgetProvider.refreshAll(applicationContext)) Result.success() else Result.retry()
         } catch (_: Exception) {
             Result.retry()
         }
     }
 }
 
-private fun fetchWidgetPrices(): WidgetPrices {
-    val connection = URL(WIDGET_API_URL).openConnection() as HttpURLConnection
-    connection.requestMethod = "GET"
-    connection.connectTimeout = 8000
-    connection.readTimeout = 8000
-    connection.setRequestProperty("Accept", "application/json")
-    connection.setRequestProperty("Cache-Control", "no-cache")
-    connection.setRequestProperty("User-Agent", "ARZ-NET-Android/1.1")
+private fun fetchWidgetPrices(context: Context): WidgetPrices {
+    val prefs = context.getSharedPreferences("arznet_widget_cache", Context.MODE_PRIVATE)
+    var lastError: Exception? = null
+    var body: String? = null
 
-    try {
-        val code = connection.responseCode
-        if (code !in 200..299) throw IllegalStateException("HTTP $code")
-        val body = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-        val root = JSONObject(body)
-        if (!root.optBoolean("ok")) {
-            throw IllegalStateException(root.optString("error", "پاسخ نامعتبر"))
+    // Retry transient DNS/network errors instead of treating the first failure as final.
+    repeat(3) { attempt ->
+        try {
+            val connection = (URL(WIDGET_API_URL).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 12000
+                readTimeout = 12000
+                useCaches = false
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("Cache-Control", "no-cache, no-store")
+                setRequestProperty("Pragma", "no-cache")
+                setRequestProperty("User-Agent", "ARZ-NET-Android/1.2")
+            }
+            try {
+                val code = connection.responseCode
+                if (code !in 200..299) throw IllegalStateException("HTTP $code")
+                val received = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val check = JSONObject(received)
+                if (!check.optBoolean("ok")) throw IllegalStateException(check.optString("error", "پاسخ نامعتبر"))
+                body = received
+                prefs.edit().putString("last_json", received).apply()
+            } finally {
+                connection.disconnect()
+            }
+        } catch (e: Exception) {
+            lastError = e
+            android.util.Log.w("ARZNETWidget", "Fetch attempt ${attempt + 1}/3 failed", e)
+            if (attempt < 2) try { Thread.sleep(1200L * (attempt + 1)) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
         }
-
-        val items = root.optJSONObject("items") ?: JSONObject()
-        val keys = listOf("usd", "gram", "emami", "usdt")
-        val quotes = keys.map { key ->
-            val hansha = items.optJSONObject(key)?.optJSONObject("hansha")
-            val timestamp = hansha?.optString("timestamp")
-                ?.takeIf { it.isNotBlank() && it != "null" }
-            val price = hansha?.numberOrNull("price")
-            WidgetQuote(
-                key = key,
-                price = price,
-                timestamp = timestamp,
-                fresh = price != null && isFresh(timestamp)
-            )
-        }
-
-        return WidgetPrices(
-            quotes = quotes,
-            serverUpdatedAt = root.optString("updated_at")
-                .takeIf { it.isNotBlank() && it != "null" }
-        )
-    } finally {
-        connection.disconnect()
+        if (body != null) return parseWidgetPrices(body!!, fromCache = false)
     }
+
+    // If the network is down, show the last received prices clearly marked as old.
+    val cached = prefs.getString("last_json", null)
+    if (!cached.isNullOrBlank()) return parseWidgetPrices(cached, fromCache = true)
+    throw lastError ?: IllegalStateException("دریافت قیمت ناموفق بود")
+}
+
+private fun parseWidgetPrices(body: String, fromCache: Boolean): WidgetPrices {
+    val root = JSONObject(body)
+    if (!root.optBoolean("ok")) throw IllegalStateException(root.optString("error", "پاسخ نامعتبر"))
+    val items = root.optJSONObject("items") ?: JSONObject()
+    val keys = listOf("usd", "gram", "emami", "usdt")
+    val quotes = keys.map { key ->
+        val hansha = items.optJSONObject(key)?.optJSONObject("hansha")
+        val timestamp = hansha?.optString("timestamp")?.takeIf { it.isNotBlank() && it != "null" }
+        val price = hansha?.numberOrNull("price")
+        WidgetQuote(key, price, timestamp, price != null && isFresh(timestamp))
+    }
+    return WidgetPrices(
+        quotes = quotes,
+        serverUpdatedAt = root.optString("updated_at").takeIf { it.isNotBlank() && it != "null" },
+        fromCache = fromCache
+    )
 }
 
 private fun JSONObject.numberOrNull(key: String): Double? {
