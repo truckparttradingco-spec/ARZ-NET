@@ -65,12 +65,16 @@ class MarketWidgetProvider : AppWidgetProvider() {
             val ids = manager.getAppWidgetIds(component)
             if (ids.isEmpty()) return
 
+            var errorMessage: String? = null
             val prices = try {
                 fetchWidgetPrices()
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                android.util.Log.e("ARZNETWidget", "Price fetch failed", e)
+                val detail = e.message?.takeIf { it.isNotBlank() } ?: "No details"
+                errorMessage = "${e.javaClass.simpleName}: $detail".take(90)
                 null
             }
-            ids.forEach { id -> render(context, manager, id, prices) }
+            ids.forEach { id -> render(context, manager, id, prices, errorMessage) }
         }
 
         private fun refreshInBackground(context: Context) {
@@ -99,13 +103,17 @@ class MarketWidgetProvider : AppWidgetProvider() {
             context: Context,
             manager: AppWidgetManager,
             id: Int,
-            prices: WidgetPrices?
+            prices: WidgetPrices?,
+            errorMessage: String? = null
         ) {
             val views = RemoteViews(context.packageName, R.layout.market_widget)
             setRefreshIntent(context, views)
 
             if (prices == null) {
-                views.setTextViewText(R.id.widget_status, "اتصال ناموفق • برای تلاش دوباره ↻ را بزنید")
+                views.setTextViewText(
+                    R.id.widget_status,
+                    "خطا: ${errorMessage ?: "دریافت اطلاعات ناموفق بود"}"
+                )
                 listOf(
                     R.id.widget_usd_price,
                     R.id.widget_gold_price,
