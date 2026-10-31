@@ -160,18 +160,32 @@ class MarketWidgetProvider : AppWidgetProvider() {
         }
 
         private fun setRefreshIntent(context: Context, views: RemoteViews) {
-            val intent = Intent(context, MarketWidgetProvider::class.java).apply {
+            // Refresh button: send a broadcast to refresh prices without opening the app.
+            val refreshIntent = Intent(context, MarketWidgetProvider::class.java).apply {
                 action = ACTION_REFRESH
             }
-            val pending = PendingIntent.getBroadcast(
+            val refreshPendingIntent = PendingIntent.getBroadcast(
                 context,
                 7301,
-                intent,
+                refreshIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            views.setOnClickPendingIntent(R.id.widget_refresh, pending)
-            // Tapping the widget itself also requests an update.
-            views.setOnClickPendingIntent(R.id.widget_root, pending)
+            views.setOnClickPendingIntent(R.id.widget_refresh, refreshPendingIntent)
+
+            // Widget body: open the app directly without triggering a refresh action.
+            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+            if (launchIntent != null) {
+                launchIntent.addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                )
+                val openAppPendingIntent = PendingIntent.getActivity(
+                    context,
+                    7302,
+                    launchIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                views.setOnClickPendingIntent(R.id.widget_root, openAppPendingIntent)
+            }
         }
 
         private fun scheduleWidgetWork(context: Context) {
