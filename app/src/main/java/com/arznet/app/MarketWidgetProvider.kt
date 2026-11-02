@@ -55,8 +55,26 @@ class MarketWidgetProvider : AppWidgetProvider() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
-        super.onReceive(context, intent)
-        if (intent.action == ACTION_REFRESH) refreshInBackground(context)
+        if (intent.action != ACTION_REFRESH) {
+            super.onReceive(context, intent)
+            return
+        }
+
+        // Start the refresh directly from the widget tap; do not wait for WorkManager scheduling.
+        val pendingResult = goAsync()
+        val manager = AppWidgetManager.getInstance(context)
+        val component = ComponentName(context, MarketWidgetProvider::class.java)
+        manager.getAppWidgetIds(component).forEach { id -> showLoading(context, manager, id) }
+
+        Thread({
+            try {
+                refreshAll(context.applicationContext)
+            } catch (e: Exception) {
+                android.util.Log.e("ARZNETWidget", "Direct widget refresh failed", e)
+            } finally {
+                pendingResult.finish()
+            }
+        }, "arznet-widget-refresh").start()
     }
 
     companion object {
@@ -220,7 +238,7 @@ private fun fetchWidgetPrices(context: Context): WidgetPrices {
     var body: String? = null
 
     // Retry transient DNS/network errors instead of treating the first failure as final.
-    repeat(3) { attempt ->
+    repeat(2) { attempt ->
         try {
             val connection = (URL(WIDGET_API_URL).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
@@ -246,7 +264,7 @@ private fun fetchWidgetPrices(context: Context): WidgetPrices {
         } catch (e: Exception) {
             lastError = e
             android.util.Log.w("ARZNETWidget", "Fetch attempt ${attempt + 1}/3 failed", e)
-            if (attempt < 2) try { Thread.sleep(1200L * (attempt + 1)) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+            if (attempt < 1) try { Thread.sleep(350L) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
         }
         if (body != null) return parseWidgetPrices(body!!, fromCache = false)
     }
