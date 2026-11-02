@@ -107,8 +107,13 @@ class MarketWidgetProvider : AppWidgetProvider() {
             if (expedited) {
                 builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             }
+            val workName = if (expedited) {
+                "arznet-market-widget-refresh-now"
+            } else {
+                "arznet-market-widget-refresh"
+            }
             WorkManager.getInstance(context).enqueueUniqueWork(
-                "arznet-market-widget-refresh-now",
+                workName,
                 androidx.work.ExistingWorkPolicy.KEEP,
                 builder.build()
             )
