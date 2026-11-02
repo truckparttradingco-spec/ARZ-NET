@@ -58,7 +58,6 @@ class MarketWidgetProvider : AppWidgetProvider() {
     override fun onDisabled(context: Context) {
         WorkManager.getInstance(context).cancelUniqueWork("arznet-market-widget-refresh-now")
         WorkManager.getInstance(context).cancelUniqueWork("arznet-market-widget-refresh")
-        WorkManager.getInstance(context).cancelUniquePeriodicWork("arznet-market-widget-refresh")
     }
 
     override fun onReceive(context: Context, intent: Intent) {
