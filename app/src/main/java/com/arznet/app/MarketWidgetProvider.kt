@@ -242,8 +242,8 @@ private fun fetchWidgetPrices(context: Context): WidgetPrices {
         try {
             val connection = (URL(WIDGET_API_URL).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
-                connectTimeout = 12000
-                readTimeout = 12000
+                connectTimeout = 4000
+                readTimeout = 4000
                 useCaches = false
                 setRequestProperty("Accept", "application/json")
                 setRequestProperty("Cache-Control", "no-cache, no-store")
@@ -263,7 +263,7 @@ private fun fetchWidgetPrices(context: Context): WidgetPrices {
             }
         } catch (e: Exception) {
             lastError = e
-            android.util.Log.w("ARZNETWidget", "Fetch attempt ${attempt + 1}/3 failed", e)
+            android.util.Log.w("ARZNETWidget", "Fetch attempt ${attempt + 1}/2 failed", e)
             if (attempt < 1) try { Thread.sleep(350L) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
         }
         if (body != null) return parseWidgetPrices(body!!, fromCache = false)
