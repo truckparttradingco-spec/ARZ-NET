@@ -22,7 +22,8 @@
         <receiver
             android:name=".MarketWidgetProvider"
             android:label="ویجت قیمت‌های ARZ-NET"
-            android:exported="false">
+            android:exported="true"
+            android:permission="android.permission.BIND_APPWIDGET">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="com.arznet.prices.WIDGET_REFRESH" />
