@@ -10,6 +10,7 @@ import android.widget.RemoteViews
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -54,27 +55,23 @@ class MarketWidgetProvider : AppWidgetProvider() {
         scheduleWidgetWork(context)
     }
 
+    override fun onDisabled(context: Context) {
+        WorkManager.getInstance(context).cancelUniqueWork("arznet-market-widget-refresh-now")
+        WorkManager.getInstance(context).cancelUniqueWork("arznet-market-widget-refresh")
+        WorkManager.getInstance(context).cancelUniquePeriodicWork("arznet-market-widget-refresh")
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_REFRESH) {
             super.onReceive(context, intent)
             return
         }
 
-        // Start the refresh directly from the widget tap; do not wait for WorkManager scheduling.
-        val pendingResult = goAsync()
+        // Update the status immediately, then let expedited WorkManager work perform network I/O.
         val manager = AppWidgetManager.getInstance(context)
         val component = ComponentName(context, MarketWidgetProvider::class.java)
         manager.getAppWidgetIds(component).forEach { id -> showLoading(context, manager, id) }
-
-        Thread({
-            try {
-                refreshAll(context.applicationContext)
-            } catch (e: Exception) {
-                android.util.Log.e("ARZNETWidget", "Direct widget refresh failed", e)
-            } finally {
-                pendingResult.finish()
-            }
-        }, "arznet-widget-refresh").start()
+        refreshInBackground(context, expedited = true)
     }
 
     companion object {
@@ -100,26 +97,28 @@ class MarketWidgetProvider : AppWidgetProvider() {
             return liveFetchSucceeded
         }
 
-        private fun refreshInBackground(context: Context) {
-            val request = OneTimeWorkRequestBuilder<MarketWidgetWorker>()
+        private fun refreshInBackground(context: Context, expedited: Boolean = false) {
+            val builder = OneTimeWorkRequestBuilder<MarketWidgetWorker>()
                 .setConstraints(
                     Constraints.Builder()
                         .setRequiredNetworkType(NetworkType.CONNECTED)
                         .build()
                 )
-                .build()
-            WorkManager.getInstance(context).enqueue(request)
+            if (expedited) {
+                builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            }
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                "arznet-market-widget-refresh-now",
+                androidx.work.ExistingWorkPolicy.KEEP,
+                builder.build()
+            )
         }
 
         private fun showLoading(context: Context, manager: AppWidgetManager, id: Int) {
+            // Partial update preserves the last displayed prices while refreshing.
             val views = RemoteViews(context.packageName, R.layout.market_widget)
-            views.setTextViewText(R.id.widget_status, "در حال دریافت قیمت‌ها…")
-            setPrice(views, R.id.widget_usd_price, null, false)
-            setPrice(views, R.id.widget_gold_price, null, false)
-            setPrice(views, R.id.widget_coin_price, null, false)
-            setPrice(views, R.id.widget_usdt_price, null, false)
-            setRefreshIntent(context, views)
-            manager.updateAppWidget(id, views)
+            views.setTextViewText(R.id.widget_status, "در حال به‌روزرسانی قیمت‌ها…")
+            manager.partiallyUpdateAppWidget(id, views)
         }
 
         private fun render(
