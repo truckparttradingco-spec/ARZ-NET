@@ -99,6 +99,7 @@ private fun PricesScreen() {
                 prefs.edit().putString(HOME_KEYS, homeKeys.joinToString(",")).apply()
             } else {
                 homeKeys = homeKeys.filter { it in available }.take(MAX_HOME_CARDS)
+                prefs.edit().putString(HOME_KEYS, homeKeys.joinToString(",")).apply()
             }
             error = null
         } catch (e: Exception) {
@@ -265,13 +266,11 @@ private fun defaultHomeAssetKeys(quotes: List<Quote>): List<String> {
     )
     val used = mutableSetOf<String>()
     val chosen = requestedGroups.mapNotNull { aliases ->
-        val exact = quotes.firstOrNull { q ->
-            val key = q.key.lowercase(Locale.ROOT).replace("_", " ").replace("-", " ")
-            aliases.any { alias -> key == alias || q.label.lowercase(Locale.ROOT).contains(alias) }
-        }
-        val match = exact ?: quotes.firstOrNull { q ->
-            val key = q.key.lowercase(Locale.ROOT).replace("_", " ").replace("-", " ")
-            aliases.any { alias -> key.contains(alias) || q.label.lowercase(Locale.ROOT).contains(alias) }
+        fun normalized(value: String) = value.lowercase(Locale.ROOT).replace("_", " ").replace("-", " ").trim()
+        val exactKey = quotes.firstOrNull { q -> aliases.any { normalized(q.key) == it } }
+        val exactLabel = quotes.firstOrNull { q -> aliases.any { normalized(q.label) == it } }
+        val match = exactKey ?: exactLabel ?: quotes.firstOrNull { q ->
+            aliases.any { alias -> normalized(q.key).contains(alias) || normalized(q.label).contains(alias) }
         }
         match?.key?.takeIf { used.add(it) }
     }
