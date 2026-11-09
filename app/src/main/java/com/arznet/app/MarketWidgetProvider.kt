@@ -136,6 +136,9 @@ class MarketWidgetProvider : AppWidgetProvider() {
         private fun showLoading(context: Context, manager: AppWidgetManager, id: Int) {
             // Partial update preserves the last displayed prices while refreshing.
             val views = RemoteViews(context.packageName, R.layout.market_widget)
+            // Keep the whole widget tappable even during the initial loading state.
+            // The refresh button remains separate; tapping the widget body opens MainActivity.
+            setRefreshIntent(context, views)
             views.setTextViewText(R.id.widget_status, "در حال به‌روزرسانی قیمت‌ها…")
             manager.partiallyUpdateAppWidget(id, views)
         }
