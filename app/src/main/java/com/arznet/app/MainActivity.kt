@@ -74,7 +74,7 @@ private fun PricesScreen() {
         try {
             val received = withContext(Dispatchers.IO) { fetchPrices() }
             data = received
-            if (homeKeys.isEmpty()) {
+            if (!prefs.contains(HOME_KEYS)) {
                 homeKeys = received.quotes.map { it.key }
                 prefs.edit().putString(HOME_KEYS, homeKeys.joinToString(",")).apply()
             } else {
