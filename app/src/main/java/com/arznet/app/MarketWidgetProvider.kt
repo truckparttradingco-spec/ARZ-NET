@@ -151,10 +151,10 @@ class MarketWidgetProvider : AppWidgetProvider() {
             setRefreshIntent(context, views)
 
             val slots = listOf(
-                Triple(R.id.widget_usd_title, R.id.widget_usd_price, "widget_slot_1"),
-                Triple(R.id.widget_gold_title, R.id.widget_gold_price, "widget_slot_2"),
-                Triple(R.id.widget_coin_title, R.id.widget_coin_price, "widget_slot_3"),
-                Triple(R.id.widget_usdt_title, R.id.widget_usdt_price, "widget_slot_4")
+                arrayOf(R.id.widget_usd_title, R.id.widget_usd_code, R.id.widget_usd_price),
+                arrayOf(R.id.widget_gold_title, R.id.widget_gold_code, R.id.widget_gold_price),
+                arrayOf(R.id.widget_coin_title, R.id.widget_coin_code, R.id.widget_coin_price),
+                arrayOf(R.id.widget_usdt_title, R.id.widget_usdt_code, R.id.widget_usdt_price)
             )
             val defaults = listOf("usd", "gram", "emami", "usdt")
             val prefs = context.getSharedPreferences("arznet_display_preferences", Context.MODE_PRIVATE)
@@ -164,8 +164,9 @@ class MarketWidgetProvider : AppWidgetProvider() {
             val byKey = prices?.quotes?.associateBy { it.key } ?: emptyMap()
             slots.forEachIndexed { index, slot ->
                 val quote = byKey[selectedKeys[index]]
-                views.setTextViewText(slot.first, quote?.label ?: selectedKeys[index].uppercase(Locale.ROOT))
-                setPrice(views, slot.second, quote?.price, prices != null && !prices.fromCache && quote?.fresh == true)
+                views.setTextViewText(slot[0], quote?.label ?: selectedKeys[index].uppercase(Locale.ROOT))
+                views.setTextViewText(slot[1], selectedKeys[index].uppercase(Locale.ROOT))
+                setPrice(views, slot[2], quote?.price, prices != null && !prices.fromCache && quote?.fresh == true)
             }
 
             if (prices == null) {
