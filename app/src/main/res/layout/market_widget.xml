@@ -87,6 +87,7 @@
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
+                            android:id="@+id/widget_usd_code"
                             android:text="USD"
                             android:textColor="#8794A8"
                             android:textSize="10sp" />
@@ -149,6 +150,7 @@
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
+                            android:id="@+id/widget_gold_code"
                             android:text="GRAM"
                             android:textColor="#8794A8"
                             android:textSize="10sp" />
@@ -218,6 +220,7 @@
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
+                            android:id="@+id/widget_coin_code"
                             android:text="EMAMI"
                             android:textColor="#8794A8"
                             android:textSize="10sp" />
@@ -282,6 +285,7 @@
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
+                            android:id="@+id/widget_usdt_code"
                             android:text="USDT"
                             android:textColor="#8794A8"
                             android:textSize="10sp" />
