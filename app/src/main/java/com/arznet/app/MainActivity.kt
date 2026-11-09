@@ -38,7 +38,7 @@ private const val API_URL = "https://truckparttrading.com/price-list/chand/kwgt-
 private const val MAX_PRICE_AGE_SECONDS = 60L
 private const val PREFS = "arznet_display_preferences"
 private const val HOME_KEYS = "home_asset_keys"
-private const val MAX_HOME_CARDS = 12
+private const val MAX_HOME_CARDS = 10
 private val Bg = Color(0xFF080D16)
 private val Panel = Color(0xFF111B2A)
 private val CardBg = Color(0xFF142237)
@@ -94,7 +94,8 @@ private fun PricesScreen() {
             data = received
             val available = received.quotes.map { it.key }.toSet()
             if (!prefs.contains(HOME_KEYS)) {
-                homeKeys = received.quotes.take(MAX_HOME_CARDS).map { it.key }
+                // First launch: prioritize the ten assets requested for the home screen.
+                homeKeys = defaultHomeAssetKeys(received.quotes)
                 prefs.edit().putString(HOME_KEYS, homeKeys.joinToString(",")).apply()
             } else {
                 homeKeys = homeKeys.filter { it in available }.take(MAX_HOME_CARDS)
@@ -155,7 +156,7 @@ private fun PricesScreen() {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("کارت‌های فعال: ${homeKeys.size} از ${MAX_HOME_CARDS}", color = Muted, fontSize = 11.sp)
+            Text("کارت‌های صفحه اصلی: ${homeKeys.size} از ۱۰", color = Muted, fontSize = 11.sp)
             Text("HANSHA  •  ${data?.quotes?.size ?: 0} دارایی", color = Blue, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         }
         Spacer(Modifier.height(10.dp))
@@ -201,7 +202,7 @@ private fun PricesScreen() {
     if (showHomeSettings && data != null) {
         AlertDialog(
             onDismissRequest = { showHomeSettings = false },
-            title = { Text("کارت‌های صفحه اصلی (حداکثر ۱۲)") },
+            title = { Text("انتخاب ۱۰ کارت صفحه اصلی") },
             text = {
                 Column {
                     Text("${homeKeys.size} کارت انتخاب شده", color = Muted, fontSize = 12.sp)
@@ -245,6 +246,37 @@ private fun PricesScreen() {
             showWidgetSettings = false
         }
     }
+}
+
+// Resolve the requested defaults against the live HANSHA feed; never invent prices.
+// All quotes returned by HANSHA remain available in both asset pickers.
+private fun defaultHomeAssetKeys(quotes: List<Quote>): List<String> {
+    val requestedGroups = listOf(
+        listOf("usd", "us dollar", "دلار"),
+        listOf("usdt", "tether", "تتر"),
+        listOf("aed", "dirham", "درهم"),
+        listOf("gram", "18k", "18 karat", "gold gram", "گرم", "۱۸ عیار"),
+        listOf("emami", "full coin", "bahar azadi", "سکه امامی", "تمام سکه"),
+        listOf("nim", "half coin", "نیم سکه"),
+        listOf("rob", "quarter coin", "ربع سکه"),
+        listOf("try", "turkish lira", "لیر ترکیه"),
+        listOf("cny", "yuan", "rmb", "یوان"),
+        listOf("ounce", "xau", "ons", "اونس")
+    )
+    val used = mutableSetOf<String>()
+    val chosen = requestedGroups.mapNotNull { aliases ->
+        val exact = quotes.firstOrNull { q ->
+            val key = q.key.lowercase(Locale.ROOT).replace("_", " ").replace("-", " ")
+            aliases.any { alias -> key == alias || q.label.lowercase(Locale.ROOT).contains(alias) }
+        }
+        val match = exact ?: quotes.firstOrNull { q ->
+            val key = q.key.lowercase(Locale.ROOT).replace("_", " ").replace("-", " ")
+            aliases.any { alias -> key.contains(alias) || q.label.lowercase(Locale.ROOT).contains(alias) }
+        }
+        match?.key?.takeIf { used.add(it) }
+    }
+    // If a requested instrument is absent from the feed, fill with other real feed entries.
+    return (chosen + quotes.map { it.key }.filter { used.add(it) }).take(MAX_HOME_CARDS)
 }
 
 @Composable
