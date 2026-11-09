@@ -29,10 +29,12 @@ import java.util.concurrent.TimeUnit
 
 private const val WIDGET_API_URL = "https://truckparttrading.com/price-list/chand/kwgt-proxy.php"
 private const val ACTION_REFRESH = "com.arznet.prices.WIDGET_REFRESH"
+private const val ACTION_CONFIG_CHANGED = "com.arznet.prices.WIDGET_CONFIG_CHANGED"
 private const val MAX_PRICE_AGE_SECONDS = 60L
 
 private data class WidgetQuote(
     val key: String,
+    val label: String,
     val price: Double?,
     val timestamp: String?,
     val fresh: Boolean
@@ -61,6 +63,10 @@ class MarketWidgetProvider : AppWidgetProvider() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == ACTION_CONFIG_CHANGED) {
+            refreshInBackground(context, expedited = true)
+            return
+        }
         if (intent.action != ACTION_REFRESH) {
             super.onReceive(context, intent)
             return
@@ -74,6 +80,15 @@ class MarketWidgetProvider : AppWidgetProvider() {
     }
 
     companion object {
+        fun saveWidgetSelection(context: Context, keys: List<String>) {
+            val prefs = context.getSharedPreferences("arznet_display_preferences", Context.MODE_PRIVATE)
+            val defaults = listOf("usd", "gram", "emami", "usdt")
+            val editor = prefs.edit()
+            for (index in 0 until 4) editor.putString("widget_slot_" + (index + 1), keys.getOrNull(index) ?: defaults[index])
+            editor.apply()
+            context.sendBroadcast(Intent(context, MarketWidgetProvider::class.java).setAction(ACTION_CONFIG_CHANGED))
+        }
+
         fun refreshAll(context: Context): Boolean {
             val manager = AppWidgetManager.getInstance(context)
             val component = ComponentName(context, MarketWidgetProvider::class.java)
@@ -135,26 +150,29 @@ class MarketWidgetProvider : AppWidgetProvider() {
             val views = RemoteViews(context.packageName, R.layout.market_widget)
             setRefreshIntent(context, views)
 
+            val slots = listOf(
+                Triple(R.id.widget_usd_title, R.id.widget_usd_price, "widget_slot_1"),
+                Triple(R.id.widget_gold_title, R.id.widget_gold_price, "widget_slot_2"),
+                Triple(R.id.widget_coin_title, R.id.widget_coin_price, "widget_slot_3"),
+                Triple(R.id.widget_usdt_title, R.id.widget_usdt_price, "widget_slot_4")
+            )
+            val defaults = listOf("usd", "gram", "emami", "usdt")
+            val prefs = context.getSharedPreferences("arznet_display_preferences", Context.MODE_PRIVATE)
+            val selectedKeys = (0 until 4).map { index ->
+                prefs.getString("widget_slot_" + (index + 1), defaults[index]) ?: defaults[index]
+            }
+            val byKey = prices?.quotes?.associateBy { it.key } ?: emptyMap()
+            slots.forEachIndexed { index, slot ->
+                val quote = byKey[selectedKeys[index]]
+                views.setTextViewText(slot.first, quote?.label ?: selectedKeys[index].uppercase(Locale.ROOT))
+                setPrice(views, slot.second, quote?.price, prices != null && !prices.fromCache && quote?.fresh == true)
+            }
+
             if (prices == null) {
-                views.setTextViewText(
-                    R.id.widget_status,
-                    "خطا: ${errorMessage ?: "دریافت اطلاعات ناموفق بود"}"
-                )
-                listOf(
-                    R.id.widget_usd_price,
-                    R.id.widget_gold_price,
-                    R.id.widget_coin_price,
-                    R.id.widget_usdt_price
-                ).forEach { views.setTextViewText(it, "—") }
+                views.setTextViewText(R.id.widget_status, "خطا: " + (errorMessage ?: "دریافت اطلاعات ناموفق بود"))
                 manager.updateAppWidget(id, views)
                 return
             }
-
-            val byKey = prices.quotes.associateBy { it.key }
-            setPrice(views, R.id.widget_usd_price, byKey["usd"]?.price, !prices.fromCache && byKey["usd"]?.fresh == true)
-            setPrice(views, R.id.widget_gold_price, byKey["gram"]?.price, !prices.fromCache && byKey["gram"]?.fresh == true)
-            setPrice(views, R.id.widget_coin_price, byKey["emami"]?.price, !prices.fromCache && byKey["emami"]?.fresh == true)
-            setPrice(views, R.id.widget_usdt_price, byKey["usdt"]?.price, !prices.fromCache && byKey["usdt"]?.fresh == true)
 
             val hasStale = prices.quotes.any { it.price != null && (!it.fresh || prices.fromCache) }
             val hasFresh = prices.quotes.any { it.price != null && it.fresh && !prices.fromCache }
@@ -282,12 +300,22 @@ private fun parseWidgetPrices(body: String, fromCache: Boolean): WidgetPrices {
     val root = JSONObject(body)
     if (!root.optBoolean("ok")) throw IllegalStateException(root.optString("error", "پاسخ نامعتبر"))
     val items = root.optJSONObject("items") ?: JSONObject()
-    val keys = listOf("usd", "gram", "emami", "usdt")
-    val quotes = keys.map { key ->
-        val hansha = items.optJSONObject(key)?.optJSONObject("hansha")
-        val timestamp = hansha?.optString("timestamp")?.takeIf { it.isNotBlank() && it != "null" }
-        val price = hansha?.numberOrNull("price")
-        WidgetQuote(key, price, timestamp, price != null && isFresh(timestamp))
+    val quotes = mutableListOf<WidgetQuote>()
+    val keys = items.keys()
+    while (keys.hasNext()) {
+        val key = keys.next()
+        val item = items.optJSONObject(key) ?: continue
+        val hansha = item.optJSONObject("hansha") ?: continue
+        val timestamp = hansha.optString("timestamp").takeIf { it.isNotBlank() && it != "null" }
+        val price = hansha.numberOrNull("price")
+        val fields = listOf("label_fa", "name_fa", "title_fa", "fa_name", "label", "name", "title", "symbol")
+        var label: String? = null
+        for (field in fields) {
+            val value = item.optString(field)
+            if (value.isNotBlank() && value != "null") { label = value; break }
+        }
+        if (label == null) label = key.replace('_', ' ').replace('-', ' ').uppercase(Locale.ROOT)
+        quotes.add(WidgetQuote(key, label, price, timestamp, price != null && isFresh(timestamp)))
     }
     return WidgetPrices(
         quotes = quotes,
