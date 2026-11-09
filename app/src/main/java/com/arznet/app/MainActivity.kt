@@ -161,7 +161,6 @@ private fun PricesScreen() {
     if (showWidgetSettings && data != null) {
         WidgetSettingsDialog(quotes = data!!.quotes, onDismiss = { showWidgetSettings = false }) { keys ->
             MarketWidgetProvider.saveWidgetSelection(context, keys)
-            MarketWidgetProvider.refreshAll(context)
             showWidgetSettings = false
         }
     }
