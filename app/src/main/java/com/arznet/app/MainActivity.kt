@@ -207,7 +207,8 @@ private fun PricesScreen() {
                     Text("${homeKeys.size} کارت انتخاب شده", color = Muted, fontSize = 12.sp)
                     Spacer(Modifier.height(6.dp))
                     androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.heightIn(max = 440.dp)) {
-                        items(data!!.quotes, key = { it.key }) { quote ->
+                        items(data!!.quotes.size) { quoteIndex ->
+                            val quote = data!!.quotes[quoteIndex]
                             Row(
                                 Modifier.fillMaxWidth().padding(vertical = 3.dp),
                                 verticalAlignment = Alignment.CenterVertically
