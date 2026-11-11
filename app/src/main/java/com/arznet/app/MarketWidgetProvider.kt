@@ -252,7 +252,7 @@ class MarketWidgetProvider : AppWidgetProvider() {
                 hasStale -> "هشدار: قیمت قدیمی است؛ قیمت زنده موجود نیست"
                 hasFresh && serverTime != null -> "قیمت زنده • پاسخ سرور $serverTime"
                 hasFresh -> "قیمت زنده • عمر قیمت حداکثر ۹۰ دقیقه است"
-                else -> "قیمت زنده در دسترس نیست؛ زمان معتبر ≤ ۶۰ ثانیه لازم است"
+                else -> "قیمت زنده در دسترس نیست؛ زمان معتبر ≤ ۹۰ دقیقه لازم است"
             }
             views.setTextViewText(R.id.widget_status, status)
             manager.updateAppWidget(id, views)
