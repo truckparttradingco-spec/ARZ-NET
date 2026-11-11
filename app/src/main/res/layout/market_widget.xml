@@ -61,6 +61,7 @@
                     android:orientation="horizontal">
 
                     <TextView
+                        android:id="@+id/widget_usd_icon"
                         android:layout_width="35dp"
                         android:layout_height="35dp"
                         android:background="@drawable/widget_icon_usd_bg"
@@ -87,6 +88,7 @@
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
+                            android:id="@+id/widget_usd_code"
                             android:text="USD"
                             android:textColor="#8794A8"
                             android:textSize="10sp" />
@@ -123,6 +125,7 @@
                     android:orientation="horizontal">
 
                     <TextView
+                        android:id="@+id/widget_gold_icon"
                         android:layout_width="35dp"
                         android:layout_height="35dp"
                         android:background="@drawable/widget_icon_gold_bg"
@@ -149,6 +152,7 @@
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
+                            android:id="@+id/widget_gold_code"
                             android:text="GRAM"
                             android:textColor="#8794A8"
                             android:textSize="10sp" />
@@ -192,6 +196,7 @@
                     android:orientation="horizontal">
 
                     <TextView
+                        android:id="@+id/widget_coin_icon"
                         android:layout_width="35dp"
                         android:layout_height="35dp"
                         android:background="@drawable/widget_icon_coin_bg"
@@ -218,6 +223,7 @@
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
+                            android:id="@+id/widget_coin_code"
                             android:text="EMAMI"
                             android:textColor="#8794A8"
                             android:textSize="10sp" />
@@ -254,6 +260,7 @@
                     android:orientation="horizontal">
 
                     <TextView
+                        android:id="@+id/widget_usdt_icon"
                         android:layout_width="35dp"
                         android:layout_height="35dp"
                         android:background="@drawable/widget_icon_usdt_bg"
@@ -282,6 +289,7 @@
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
+                            android:id="@+id/widget_usdt_code"
                             android:text="USDT"
                             android:textColor="#8794A8"
                             android:textSize="10sp" />

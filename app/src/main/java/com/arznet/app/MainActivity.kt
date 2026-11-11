@@ -1,12 +1,14 @@
 package com.arznet.prices
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -15,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -31,138 +34,488 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
-private const val API_URL = "https://truckparttrading.com/price-list/chand/kwgt-proxy.php"
-private const val MAX_PRICE_AGE_SECONDS = 60L
-private val Bg = Color(0xFF101216)
-private val CardBg = Color(0xFF1B1F26)
-private val Blue = Color(0xFF79A9FF)
-private val White = Color(0xFFF3F5F7)
-private val Muted = Color(0xFF9AA4B2)
-private val Green = Color(0xFF43D19E)
-private val Red = Color(0xFFFF7272)
+private const val API_URL = "https://hansha.online/latest"
+private const val MAX_PRICE_AGE_SECONDS = 5400L
+private const val PREFS = "arznet_display_preferences"
+private const val HOME_KEYS = "home_asset_keys"
+private const val MAX_HOME_CARDS = 10
 
-data class Quote(val key: String, val label: String, val price: Double?, val buy: Double?, val pct: Double?, val timestamp: String?, val fresh: Boolean)
+private data class CatalogAsset(val key: String, val label: String, val aliases: List<String>)
+private val requestedCatalog = listOf(
+    CatalogAsset("usd", "دلار آمریکا", listOf("usd", "dollar", "دلار آزاد", "دلار آمریکا")),
+    CatalogAsset("usdt", "تتر", listOf("usdt", "tether", "تتر")),
+    CatalogAsset("aed", "درهم امارات", listOf("aed", "dirham", "درهم")),
+    CatalogAsset("gold_18k_gram", "طلای ۱۸ عیار (گرم)", listOf("gram", "gold gram", "gold18", "18k", "18 karat", "18 عیار", "طلای ۱۸", "گرم طلا")),
+    CatalogAsset("coin_emami", "سکه تمام امامی", listOf("emami", "سکه امامی", "تمام امامی")),
+    CatalogAsset("coin_bahar_old", "سکه تمام بهار آزادی طرح قدیم", listOf("azadi", "bahar", "طرح قدیم", "بهار آزادی")),
+    CatalogAsset("coin_half", "نیم‌سکه", listOf("nim", "half coin", "نیم سکه", "نیم‌سکه")),
+    CatalogAsset("coin_quarter", "ربع‌سکه", listOf("rob", "quarter coin", "ربع سکه", "ربع‌سکه")),
+    CatalogAsset("coin_gram", "سکه یک‌گرمی", listOf("gerami", "gram coin", "سکه یک گرمی", "سکه یک‌گرمی")),
+    CatalogAsset("try", "لیر ترکیه", listOf("try", "turkish lira", "لیر ترکیه")),
+    CatalogAsset("cny", "یوان چین", listOf("cny", "yuan", "rmb", "یوان")),
+    CatalogAsset("xau", "اونس جهانی طلا", listOf("xau", "gold ounce", "اونس طلا", "اونس جهانی")),
+    CatalogAsset("xag", "اونس جهانی نقره", listOf("xag", "silver ounce", "اونس نقره")),
+    CatalogAsset("xpt", "اونس جهانی پلاتین", listOf("xpt", "platinum", "اونس پلاتین")),
+    CatalogAsset("xpd", "اونس جهانی پالادیوم", listOf("xpd", "palladium", "اونس پالادیوم"))
+)
+
+private fun normalizeAssetText(value: String): String =
+    value.lowercase(Locale.ROOT).replace("_", "").replace("-", "").replace(" ", "").replace("‌", "")
+
+private fun matchesCatalogAsset(key: String, label: String, asset: CatalogAsset): Boolean {
+    val k = normalizeAssetText(key)
+    val n = normalizeAssetText(label)
+    return asset.aliases.any { alias ->
+        val a = normalizeAssetText(alias)
+        k == a || n == a || (a.length >= 4 && (k.contains(a) || n.contains(a)))
+    }
+}
+
+private fun addRequestedPlaceholders(quotes: List<Quote>): List<Quote> {
+    val result = quotes.toMutableList()
+    requestedCatalog.forEach { asset ->
+        if (result.none { matchesCatalogAsset(it.key, it.label, asset) }) {
+            result.add(Quote(asset.key, asset.label, null, null, null, null, null, false))
+        }
+    }
+    return result
+}
+
+private fun assetIcon(key: String, label: String): String {
+    val value = normalizeAssetText("$key $label")
+    return when {
+        value.contains("usdt") || value.contains("tether") || value.contains("تتر") -> "₮"
+        value.contains("aed") || value.contains("dirham") || value.contains("درهم") -> "🇦🇪"
+        normalizeAssetText(key) == "try" || normalizeAssetText(key).startsWith("try") || value.contains("turkish") || value.contains("لیرترکیه") -> "🇹🇷"
+        value.contains("cny") || value.contains("yuan") || value.contains("یوان") -> "🇨🇳"
+        value.contains("usd") || value.contains("dollar") || value.contains("دلار") -> "🇺🇸"
+        value.contains("xag") || value.contains("silver") || value.contains("نقره") -> "⚪"
+        value.contains("xpt") || value.contains("platinum") || value.contains("پلاتین") -> "⚙️"
+        value.contains("xpd") || value.contains("palladium") || value.contains("پالادیوم") -> "💠"
+        value.contains("xau") || value.contains("ounce") || value.contains("اونس") -> "🌐"
+        value.contains("coin") || value.contains("سکه") || value.contains("emami") || value.contains("bahar") -> "🪙"
+        value.contains("gold") || value.contains("gram") || value.contains("طلا") -> "🟡"
+        else -> "💱"
+    }
+}
+private val Bg = Color(0xFF080D16)
+private val Panel = Color(0xFF111B2A)
+private val CardBg = Color(0xFF142237)
+private val Stroke = Color(0xFF263D59)
+private val Blue = Color(0xFF63B5FF)
+private val White = Color(0xFFF2F6FC)
+private val Muted = Color(0xFF9AADC2)
+private val Green = Color(0xFF42D6A0)
+private val Red = Color(0xFFFF8585)
+
+data class Quote(
+    val key: String,
+    val label: String,
+    val price: Double?,
+    val buy: Double?,
+    val sell: Double?,
+    val pct: Double?,
+    val timestamp: String?,
+    val fresh: Boolean,
+    val icon: String? = null
+)
 data class PriceData(val quotes: List<Quote>, val updatedAt: String?)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = android.graphics.Color.rgb(16, 18, 22)
-        window.navigationBarColor = android.graphics.Color.rgb(16, 18, 22)
-        setContent { MaterialTheme(colorScheme = darkColorScheme(primary = Blue, background = Bg, surface = CardBg, onBackground = White, onSurface = White)) { PricesScreen() } }
+        window.statusBarColor = android.graphics.Color.rgb(8, 13, 22)
+        window.navigationBarColor = android.graphics.Color.rgb(8, 13, 22)
+        setContent {
+            MaterialTheme(colorScheme = darkColorScheme(primary = Blue, background = Bg, surface = Panel, onBackground = White, onSurface = White)) {
+                PricesScreen()
+            }
+        }
     }
 }
 
 @Composable
 private fun PricesScreen() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = remember { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
     var data by remember { mutableStateOf<PriceData?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
+    var menuExpanded by remember { mutableStateOf(false) }
+    var showHomeSettings by remember { mutableStateOf(false) }
+    var showWidgetSettings by remember { mutableStateOf(false) }
+    var homeKeys by remember { mutableStateOf(prefs.getString(HOME_KEYS, "").orEmpty().split(",").filter { it.isNotBlank() }.take(MAX_HOME_CARDS)) }
     val scope = rememberCoroutineScope()
 
     suspend fun refresh() {
         loading = data == null
         try {
-            data = withContext(Dispatchers.IO) { fetchPrices() }
+            val received = withContext(Dispatchers.IO) { fetchPrices() }
+            data = received
+            val available = received.quotes.map { it.key }.toSet()
+            if (!prefs.contains(HOME_KEYS)) {
+                // First launch: prioritize the ten assets requested for the home screen.
+                homeKeys = defaultHomeAssetKeys(received.quotes)
+                prefs.edit().putString(HOME_KEYS, homeKeys.joinToString(",")).apply()
+            } else {
+                val retained = homeKeys.filter { it in available }
+                val defaults = defaultHomeAssetKeys(received.quotes)
+                homeKeys = (retained + defaults.filterNot { it in retained }).take(MAX_HOME_CARDS)
+                prefs.edit().putString(HOME_KEYS, homeKeys.joinToString(",")).apply()
+            }
             error = null
         } catch (e: Exception) {
             error = e.message ?: "دریافت اطلاعات ناموفق بود"
-        } finally { loading = false }
+        } finally {
+            loading = false
+        }
     }
 
     LaunchedEffect(Unit) {
         refresh()
-        while (isActive) { delay(60_000); refresh() }
+        while (isActive) {
+            delay(60_000)
+            refresh()
+        }
     }
 
-    Column(Modifier.fillMaxSize().background(Bg).padding(16.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+    Column(
+        Modifier.fillMaxSize().background(Bg).padding(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Column {
-                Text("ARZ-NET", color = Blue, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                Text("قیمت لحظه‌ای بازار", color = White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                Text("ARZ-NET", color = Blue, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                Text("بازار ارز و طلا", color = White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                Text("نرخ‌های دریافتی از منبع داده", color = Muted, fontSize = 11.sp)
             }
-            Button(onClick = { scope.launch { refresh() } }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF28364C))) {
-                Text(if (loading) "..." else "به‌روزرسانی")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { scope.launch { refresh() } }) {
+                    Text(if (loading) "..." else "تازه‌سازی", color = Blue, fontWeight = FontWeight.SemiBold)
+                }
+                Box {
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Text("⋮", color = White, fontSize = 27.sp, fontWeight = FontWeight.Bold)
+                    }
+                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                        DropdownMenuItem(
+                            text = { Text("انتخاب کارت‌های صفحه اصلی") },
+                            onClick = { menuExpanded = false; showHomeSettings = true }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("تنظیم چهار کارت ویجت") },
+                            onClick = { menuExpanded = false; showWidgetSettings = true }
+                        )
+                    }
+                }
             }
         }
-        Spacer(Modifier.height(6.dp))
-        Text("منبع قیمت: HANSHA", color = Muted, fontSize = 12.sp)
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(10.dp))
+        Row(
+            Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 9.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("کارت‌های صفحه اصلی: ${homeKeys.size} از ۱۰", color = Muted, fontSize = 11.sp)
+            Text("HANSHA  •  ${data?.quotes?.size ?: 0} دارایی", color = Blue, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(10.dp))
 
-        if (loading && data == null) {
-            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Blue) }
-        } else if (data == null) {
-            Column(Modifier.fillMaxWidth().weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        when {
+            loading && data == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Blue)
+            }
+            data == null -> Column(
+                Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
                 Text("دریافت قیمت‌ها انجام نشد", color = Red)
                 Text(error ?: "اتصال اینترنت را بررسی کنید", color = Muted)
                 TextButton(onClick = { scope.launch { refresh() } }) { Text("تلاش دوباره") }
             }
-        } else {
-            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(data!!.quotes) { QuoteCard(it) }
-                item { Text("مقایسه TGJU فعلاً فعال نیست؛ پاسخ سرور برای TGJU مقدار null برمی‌گرداند.", color = Muted, fontSize = 11.sp) }
+            else -> {
+                val visibleQuotes = data!!.quotes.filter { it.key in homeKeys }
+                if (visibleQuotes.isEmpty()) {
+                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text("از منوی سه‌نقطه کارت‌های بازار را انتخاب کنید.", color = Muted, textAlign = TextAlign.Center)
+                    }
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(2),
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentPadding = PaddingValues(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(9.dp),
+                        verticalArrangement = Arrangement.spacedBy(9.dp)
+                    ) {
+                        items(visibleQuotes, key = { it.key }) { quote -> QuoteCard(quote) }
+                    }
+                }
             }
         }
-        data?.updatedAt?.let { Text("به‌روزرسانی سرور: ${formatTime(it)}", Modifier.fillMaxWidth(), color = Muted, fontSize = 11.sp, textAlign = TextAlign.Center) }
-        error?.let { if (data != null) Text("خطای تازه‌سازی: $it", color = Red, fontSize = 11.sp) }
+        data?.updatedAt?.let {
+            Text("آخرین به‌روزرسانی سرور: ${formatTime(it)}", Modifier.fillMaxWidth().padding(top = 5.dp), color = Muted, fontSize = 10.sp, textAlign = TextAlign.Center)
+        }
+        error?.let { if (data != null) Text("خطای تازه‌سازی: $it", color = Red, fontSize = 10.sp) }
+    }
+
+    if (showHomeSettings && data != null) {
+        AlertDialog(
+            onDismissRequest = { showHomeSettings = false },
+            title = { Text("انتخاب ۱۰ کارت صفحه اصلی") },
+            text = {
+                Column {
+                    Text("${homeKeys.size} از ۱۰ کارت انتخاب شده", color = if (homeKeys.size == MAX_HOME_CARDS) Green else Muted, fontSize = 12.sp)
+                    if (homeKeys.size != MAX_HOME_CARDS) Text("برای ذخیره، دقیقاً ۱۰ کارت انتخاب کنید.", color = Muted, fontSize = 11.sp)
+                    Spacer(Modifier.height(6.dp))
+                    androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.heightIn(max = 440.dp)) {
+                        items(data!!.quotes.size) { quoteIndex ->
+                            val quote = data!!.quotes[quoteIndex]
+                            Row(
+                                Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = quote.key in homeKeys,
+                                    onCheckedChange = { checked ->
+                                        homeKeys = when {
+                                            checked && homeKeys.size < MAX_HOME_CARDS -> (homeKeys + quote.key).distinct()
+                                            checked -> homeKeys
+                                            else -> homeKeys - quote.key
+                                        }
+                                    }
+                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) { Text(quote.icon ?: assetIcon(quote.key, quote.label), fontSize = 19.sp); Spacer(Modifier.width(8.dp)); Text(quote.label, color = White, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = homeKeys.size == MAX_HOME_CARDS, onClick = {
+                    prefs.edit().putString(HOME_KEYS, homeKeys.joinToString(",")).apply()
+                    showHomeSettings = false
+                }) { Text("ذخیره") }
+            },
+            dismissButton = { TextButton(onClick = { showHomeSettings = false }) { Text("انصراف") } }
+        )
+    }
+
+    if (showWidgetSettings && data != null) {
+        WidgetSettingsDialog(quotes = data!!.quotes, onDismiss = { showWidgetSettings = false }) { keys ->
+            MarketWidgetProvider.saveWidgetSelection(context, keys)
+            showWidgetSettings = false
+        }
+    }
+}
+
+// Resolve the requested defaults against the live HANSHA feed; never invent prices.
+// All quotes returned by HANSHA remain available in both asset pickers.
+private fun defaultHomeAssetKeys(quotes: List<Quote>): List<String> {
+    val requestedGroups = listOf(
+        listOf("usd", "us dollar", "دلار"),
+        listOf("usdt", "tether", "تتر"),
+        listOf("aed", "dirham", "درهم"),
+        listOf("gold_18k_gram", "gold18", "18k", "18 karat", "gold gram", "طلای ۱۸", "۱۸ عیار"),
+        listOf("emami", "full coin", "bahar azadi", "سکه امامی", "تمام سکه"),
+        listOf("nim", "half coin", "نیم سکه"),
+        listOf("rob", "quarter coin", "ربع سکه"),
+        listOf("try", "turkish lira", "لیر ترکیه"),
+        listOf("cny", "yuan", "rmb", "یوان"),
+        listOf("xau", "gold ounce", "اونس طلا", "اونس جهانی طلا")
+    )
+    val used = mutableSetOf<String>()
+    val chosen = requestedGroups.mapNotNull { aliases ->
+        fun normalized(value: String) = normalizeAssetText(value)
+        val exactKey = quotes.firstOrNull { q -> aliases.any { normalized(q.key) == it } }
+        val exactLabel = quotes.firstOrNull { q -> aliases.any { normalized(q.label) == it } }
+        val match = exactKey ?: exactLabel ?: quotes.firstOrNull { q ->
+            aliases.any { alias -> alias.length >= 4 && (normalized(q.key).contains(alias) || normalized(q.label).contains(alias)) }
+        }
+        match?.key?.takeIf { used.add(it) }
+    }
+    // If a requested instrument is absent from the feed, fill with other real feed entries.
+    return (chosen + quotes.map { it.key }.filter { used.add(it) }).take(MAX_HOME_CARDS)
+}
+
+@Composable
+private fun WidgetSettingsDialog(quotes: List<Quote>, onDismiss: () -> Unit, onSave: (List<String>) -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = remember { context.getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
+    val defaults = listOf("usd", "gram", "emami", "usdt")
+    var selected by remember {
+        mutableStateOf((0..3).map { i -> prefs.getString("widget_slot_" + (i + 1), defaults[i]) ?: defaults[i] })
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("انتخاب چهار کارت ویجت") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                selected.forEachIndexed { index, key ->
+                    Column {
+                        Text("کارت ${index + 1}", color = Muted, fontSize = 12.sp)
+                        AssetPicker(quotes, key) { newKey ->
+                            selected = selected.toMutableList().also { it[index] = newKey }
+                        }
+                    }
+                }
+                Text("ظاهر و چیدمان فعلی ویجت بدون تغییر باقی می‌ماند.", color = Muted, fontSize = 11.sp)
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(selected) }) { Text("ذخیره و اعمال") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف") } }
+    )
+}
+
+@Composable
+private fun AssetPicker(quotes: List<Quote>, selectedKey: String, onSelect: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val current = quotes.firstOrNull { it.key == selectedKey }
+    Box {
+        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) { Text(assetIcon(current?.key ?: selectedKey, current?.label ?: selectedKey), fontSize = 18.sp); Spacer(Modifier.width(8.dp)); Text(current?.label ?: selectedKey, color = White, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.heightIn(max = 320.dp)
+        ) {
+            quotes.forEach { quote ->
+                DropdownMenuItem(
+                    text = { Row(verticalAlignment = Alignment.CenterVertically) { Text(quote.icon ?: assetIcon(quote.key, quote.label)); Spacer(Modifier.width(8.dp)); Text(quote.label) } },
+                    onClick = { onSelect(quote.key); expanded = false }
+                )
+            }
+        }
     }
 }
 
 @Composable
 private fun QuoteCard(q: Quote) {
     val changeColor = when { q.pct == null || q.pct == 0.0 -> Muted; q.pct > 0 -> Green; else -> Red }
-    Column(Modifier.fillMaxWidth().background(CardBg, RoundedCornerShape(18.dp)).padding(16.dp)) {
+    Column(
+        Modifier.fillMaxWidth()
+            .background(CardBg, RoundedCornerShape(16.dp))
+            .padding(11.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) { Text(q.icon ?: assetIcon(q.key, q.label), fontSize = 21.sp); Spacer(Modifier.width(7.dp)); Text(q.label, color = White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            Text(q.pct?.let { String.format(Locale.US, "%.2f", it) + "%" } ?: "—", color = changeColor, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(7.dp))
+        if (q.buy != null && q.sell != null) {
+            Row(
+                Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(9.dp)).padding(vertical = 8.dp, horizontal = 5.dp)
+            ) {
+                PriceColumn("خرید", q.buy, Green, Modifier.weight(1f))
+                Box(Modifier.width(1.dp).height(32.dp).background(Stroke))
+                PriceColumn("فروش", q.sell, Blue, Modifier.weight(1f))
+            }
+        } else {
+            Row(
+                Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(9.dp)).padding(vertical = 8.dp, horizontal = 5.dp),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                PriceColumn("قیمت بازار", q.price, Blue, Modifier.fillMaxWidth())
+            }
+        }
+        Spacer(Modifier.height(6.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(q.label, color = White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            Text("HANSHA", color = Blue, fontSize = 11.sp)
+            Text(if (q.fresh) "● زنده" else "● قدیمی/نامعتبر", color = if (q.fresh) Green else Red, fontSize = 9.sp)
+            Text("HANSHA", color = Muted, fontSize = 9.sp)
         }
-        Spacer(Modifier.height(10.dp))
-        Text(q.price?.let { "${num(it)} تومان" } ?: "قیمت در دسترس نیست", color = White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-        Text(
-            when {
-                q.price == null -> "قیمت دریافت نشد"
-                q.fresh -> "زنده • زمان قیمت کمتر از ۶۰ ثانیه"
-                q.timestamp == null -> "قدیمی/نامعتبر • زمان قیمت موجود نیست"
-                else -> "قدیمی • برای تصمیم مالی به قیمت زنده اتکا نکنید"
-            },
-            color = if (q.fresh) Green else Red,
-            fontSize = 11.sp
-        )
-        Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(q.buy?.let { "خرید: ${num(it)} تومان" } ?: " ", color = Muted, fontSize = 12.sp)
-            Text(q.pct?.let { "${if (it > 0) "+" else ""}${String.format(Locale.US, "%.2f", it)}٪" } ?: "تغییر: —", color = changeColor, fontSize = 13.sp)
+        q.timestamp?.let {
+            Text(formatTime(it), color = Muted, fontSize = 9.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.End)
         }
-        q.timestamp?.let { Spacer(Modifier.height(6.dp)); Text("زمان قیمت: ${formatTime(it)}", color = Muted, fontSize = 10.sp) }
+    }
+}
+
+@Composable
+private fun PriceColumn(label: String, value: Double?, color: Color, modifier: Modifier = Modifier) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, color = Muted, fontSize = 10.sp)
+        Text(value?.let { num(it) } ?: "—", color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("تومان", color = Muted, fontSize = 8.sp)
     }
 }
 
 private fun fetchPrices(): PriceData {
-    val c = URL(API_URL).openConnection() as HttpURLConnection
-    c.requestMethod = "GET"; c.connectTimeout = 15000; c.readTimeout = 15000
-    c.setRequestProperty("Accept", "application/json"); c.setRequestProperty("Cache-Control", "no-cache")
+    val connection = URL(API_URL).openConnection() as HttpURLConnection
+    connection.requestMethod = "GET"
+    connection.connectTimeout = 15000
+    connection.readTimeout = 15000
+    connection.setRequestProperty("Accept", "application/json")
+    connection.setRequestProperty("Cache-Control", "no-cache")
     try {
-        val code = c.responseCode
-        val stream = if (code in 200..299) c.inputStream else c.errorStream
+        val code = connection.responseCode
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
         val body = stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
         if (code !in 200..299) throw IllegalStateException("HTTP $code")
-        val root = JSONObject(body)
-        if (!root.optBoolean("ok")) throw IllegalStateException(root.optString("error", "پاسخ نامعتبر سرور"))
-        val items = root.optJSONObject("items") ?: JSONObject()
-        val defs = listOf("usd" to "دلار آزاد", "emami" to "سکه امامی", "gram" to "طلای ۱۸ عیار (گرم)", "usdt" to "تتر")
-        val quotes = defs.map { (key, label) ->
-            val h = items.optJSONObject(key)?.optJSONObject("hansha")
-            val timestamp = h?.optString("timestamp")?.takeIf { it.isNotBlank() && it != "null" }
-            val price = h?.numOrNull("price")
-            Quote(key, label, price, h?.numOrNull("buy"), h?.numOrNull("pct"), timestamp,
-                fresh = price != null && isFresh(timestamp))
+
+        val quotes = mutableListOf<Quote>()
+        val trimmed = body.trim()
+        if (trimmed.startsWith("[")) {
+            // Native HANSHA /latest format: [{ab,av,en,fa,ps:[{bp,sp,ts}]}]
+            val rows = org.json.JSONArray(trimmed)
+            for (index in 0 until rows.length()) {
+                val item = rows.optJSONObject(index) ?: continue
+                val key = item.optString("ab").trim().lowercase(Locale.ROOT)
+                if (key.isBlank() || key == "null") continue
+                val label = item.optString("fa").takeIf { it.isNotBlank() && it != "null" }
+                    ?: item.optString("en").takeIf { it.isNotBlank() && it != "null" }
+                    ?: key.uppercase(Locale.ROOT)
+                val history = item.optJSONArray("ps")
+                val latest = history?.optJSONObject(0)
+                val buy = latest?.numOrNull("bp")
+                val sell = latest?.numOrNull("sp")
+                val timestamp = latest?.optString("ts")?.takeIf { it.isNotBlank() && it != "null" }
+                val price = if (buy != null && sell != null) (buy + sell) / 2.0 else buy ?: sell
+                val icon = item.optString("av").takeIf { it.isNotBlank() && it != "null" }
+                quotes.add(Quote(key, label, price, buy, sell, null, timestamp, price != null && isFresh(timestamp), icon))
+            }
+        } else {
+            // Backward compatibility with the existing proxy response.
+            val root = JSONObject(trimmed)
+            if (!root.optBoolean("ok")) throw IllegalStateException(root.optString("error", "پاسخ نامعتبر سرور"))
+            val items = root.optJSONObject("items") ?: JSONObject()
+            val keys = items.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val item = items.optJSONObject(key) ?: continue
+                val hansha = item.optJSONObject("hansha") ?: continue
+                val timestamp = hansha.optString("timestamp").takeIf { it.isNotBlank() && it != "null" }
+                val price = hansha.numOrNull("price")
+                val labelFields = listOf("label_fa", "name_fa", "title_fa", "fa_name", "label", "name", "title", "symbol")
+                var label: String? = null
+                for (field in labelFields) {
+                    val value = item.optString(field)
+                    if (value.isNotBlank() && value != "null") { label = value; break }
+                }
+                if (label == null) label = key.replace('_', ' ').replace('-', ' ').uppercase(Locale.ROOT)
+                val buy = hansha.numOrNull("buy")
+                val sell = hansha.numOrNull("sell") ?: price
+                quotes.add(Quote(key, label, price, buy, sell, hansha.numOrNull("pct"), timestamp, price != null && isFresh(timestamp)))
+            }
         }
-        return PriceData(quotes, root.optString("updated_at").takeIf { it.isNotBlank() && it != "null" })
-    } finally { c.disconnect() }
+        if (quotes.isEmpty()) throw IllegalStateException("در پاسخ HANSHA هیچ دارایی قابل‌خواندن پیدا نشد")
+        return PriceData(addRequestedPlaceholders(quotes).sortedBy { it.label }, null)
+    } finally {
+        connection.disconnect()
+    }
 }
 
-private fun JSONObject.numOrNull(k: String): Double? = if (isNull(k)) null else optDouble(k).takeIf { it.isFinite() && it > 0.0 }
-private fun num(v: Double) = DecimalFormat("#,##0.##", java.text.DecimalFormatSymbols(Locale("fa", "IR"))).format(v)
+private fun JSONObject.numOrNull(key: String): Double? =
+    if (isNull(key)) null else optDouble(key).takeIf { it.isFinite() && it > 0.0 }
+
+private fun num(value: Double): String =
+    DecimalFormat("#,##0.##", java.text.DecimalFormatSymbols(Locale("fa", "IR"))).format(value)
 
 private fun isFresh(timestamp: String?): Boolean {
     val time = parseTimestamp(timestamp) ?: return false
@@ -173,20 +526,18 @@ private fun isFresh(timestamp: String?): Boolean {
 private fun parseTimestamp(value: String?): Long? {
     if (value.isNullOrBlank()) return null
     val patterns = listOf("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", "yyyy-MM-dd'T'HH:mm:ss'Z'", "yyyy-MM-dd'T'HH:mm:ssXXX")
-    for (pattern in patterns) {
-        try {
-            val parser = SimpleDateFormat(pattern, Locale.US).apply {
-                timeZone = TimeZone.getTimeZone("UTC")
-                isLenient = false
-            }
-            val parsed = parser.parse(value)
-            if (parsed != null) return parsed.time
-        } catch (_: Exception) { }
-    }
+    for (pattern in patterns) try {
+        val parser = SimpleDateFormat(pattern, Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+            isLenient = false
+        }
+        val parsed = parser.parse(value)
+        if (parsed != null) return parsed.time
+    } catch (_: Exception) { }
     return null
 }
 
-private fun formatTime(s: String): String {
-    val d = parseTimestamp(s) ?: return "نامشخص"
-    return SimpleDateFormat("HH:mm:ss", Locale("fa", "IR")).format(Date(d))
+private fun formatTime(value: String): String {
+    val date = parseTimestamp(value) ?: return "نامشخص"
+    return SimpleDateFormat("HH:mm:ss", Locale("fa", "IR")).format(Date(date))
 }

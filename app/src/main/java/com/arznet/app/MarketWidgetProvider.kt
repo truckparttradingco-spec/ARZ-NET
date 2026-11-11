@@ -27,15 +27,18 @@ import java.util.Locale
 import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 
-private const val WIDGET_API_URL = "https://truckparttrading.com/price-list/chand/kwgt-proxy.php"
+private const val WIDGET_API_URL = "https://hansha.online/latest"
 private const val ACTION_REFRESH = "com.arznet.prices.WIDGET_REFRESH"
-private const val MAX_PRICE_AGE_SECONDS = 60L
+private const val ACTION_CONFIG_CHANGED = "com.arznet.prices.WIDGET_CONFIG_CHANGED"
+private const val MAX_PRICE_AGE_SECONDS = 5400L
 
 private data class WidgetQuote(
     val key: String,
+    val label: String,
     val price: Double?,
     val timestamp: String?,
-    val fresh: Boolean
+    val fresh: Boolean,
+    val icon: String? = null
 )
 
 private data class WidgetPrices(
@@ -43,6 +46,65 @@ private data class WidgetPrices(
     val serverUpdatedAt: String?,
     val fromCache: Boolean = false
 )
+
+private data class WidgetCatalogAsset(val key: String, val label: String, val aliases: List<String>)
+private val widgetCatalog = listOf(
+    WidgetCatalogAsset("usd", "دلار آمریکا", listOf("usd", "dollar", "دلار آزاد", "دلار آمریکا")),
+    WidgetCatalogAsset("usdt", "تتر", listOf("usdt", "tether", "تتر")),
+    WidgetCatalogAsset("aed", "درهم امارات", listOf("aed", "dirham", "درهم")),
+    WidgetCatalogAsset("gold_18k_gram", "طلای ۱۸ عیار (گرم)", listOf("gold18", "18k", "18 karat", "18 عیار", "طلای ۱۸")),
+    WidgetCatalogAsset("coin_emami", "سکه تمام امامی", listOf("emami", "سکه امامی", "تمام امامی")),
+    WidgetCatalogAsset("coin_bahar_old", "سکه تمام بهار آزادی طرح قدیم", listOf("bahar", "طرح قدیم", "بهار آزادی")),
+    WidgetCatalogAsset("coin_half", "نیم‌سکه", listOf("nim", "half coin", "نیم سکه", "نیم‌سکه")),
+    WidgetCatalogAsset("coin_quarter", "ربع‌سکه", listOf("rob", "quarter coin", "ربع سکه", "ربع‌سکه")),
+    WidgetCatalogAsset("coin_gram", "سکه یک‌گرمی", listOf("gerami", "gram coin", "سکه یک گرمی", "سکه یک‌گرمی")),
+    WidgetCatalogAsset("try", "لیر ترکیه", listOf("try", "turkish lira", "لیر ترکیه")),
+    WidgetCatalogAsset("cny", "یوان چین", listOf("cny", "yuan", "rmb", "یوان")),
+    WidgetCatalogAsset("xau", "اونس جهانی طلا", listOf("xau", "gold ounce", "اونس طلا", "اونس جهانی")),
+    WidgetCatalogAsset("xag", "اونس جهانی نقره", listOf("xag", "silver ounce", "اونس نقره")),
+    WidgetCatalogAsset("xpt", "اونس جهانی پلاتین", listOf("xpt", "platinum", "اونس پلاتین")),
+    WidgetCatalogAsset("xpd", "اونس جهانی پالادیوم", listOf("xpd", "palladium", "اونس پالادیوم"))
+)
+
+private fun normalizeWidgetAsset(value: String): String =
+    value.lowercase(Locale.ROOT).replace("_", "").replace("-", "").replace(" ", "").replace("‌", "")
+
+private fun widgetMatchesCatalog(key: String, label: String, asset: WidgetCatalogAsset): Boolean {
+    val k = normalizeWidgetAsset(key)
+    val n = normalizeWidgetAsset(label)
+    return asset.aliases.any { alias ->
+        val a = normalizeWidgetAsset(alias)
+        k == a || n == a || (a.length >= 4 && (k.contains(a) || n.contains(a)))
+    }
+}
+
+private fun addWidgetPlaceholders(quotes: List<WidgetQuote>): List<WidgetQuote> {
+    val result = quotes.toMutableList()
+    widgetCatalog.forEach { asset ->
+        if (result.none { widgetMatchesCatalog(it.key, it.label, asset) }) {
+            result.add(WidgetQuote(asset.key, asset.label, null, null, false))
+        }
+    }
+    return result
+}
+
+private fun widgetAssetIcon(key: String, label: String): String {
+    val value = normalizeWidgetAsset("$key $label")
+    return when {
+        value.contains("usdt") || value.contains("tether") || value.contains("تتر") -> "₮"
+        value.contains("aed") || value.contains("dirham") || value.contains("درهم") -> "🇦🇪"
+        normalizeWidgetAsset(key) == "try" || normalizeWidgetAsset(key).startsWith("try") || value.contains("turkish") || value.contains("لیرترکیه") -> "🇹🇷"
+        value.contains("cny") || value.contains("yuan") || value.contains("یوان") -> "🇨🇳"
+        value.contains("usd") || value.contains("dollar") || value.contains("دلار") -> "🇺🇸"
+        value.contains("xag") || value.contains("silver") || value.contains("نقره") -> "⚪"
+        value.contains("xpt") || value.contains("platinum") || value.contains("پلاتین") -> "⚙️"
+        value.contains("xpd") || value.contains("palladium") || value.contains("پالادیوم") -> "💠"
+        value.contains("xau") || value.contains("ounce") || value.contains("اونس") -> "🌐"
+        value.contains("coin") || value.contains("سکه") || value.contains("emami") || value.contains("bahar") -> "🪙"
+        value.contains("gold") || value.contains("gram") || value.contains("طلا") -> "🟡"
+        else -> "💱"
+    }
+}
 
 class MarketWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
@@ -61,6 +123,10 @@ class MarketWidgetProvider : AppWidgetProvider() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == ACTION_CONFIG_CHANGED) {
+            refreshInBackground(context, expedited = true)
+            return
+        }
         if (intent.action != ACTION_REFRESH) {
             super.onReceive(context, intent)
             return
@@ -74,6 +140,15 @@ class MarketWidgetProvider : AppWidgetProvider() {
     }
 
     companion object {
+        fun saveWidgetSelection(context: Context, keys: List<String>) {
+            val prefs = context.getSharedPreferences("arznet_display_preferences", Context.MODE_PRIVATE)
+            val defaults = listOf("usd", "gram", "emami", "usdt")
+            val editor = prefs.edit()
+            for (index in 0 until 4) editor.putString("widget_slot_" + (index + 1), keys.getOrNull(index) ?: defaults[index])
+            editor.apply()
+            context.sendBroadcast(Intent(context, MarketWidgetProvider::class.java).setAction(ACTION_CONFIG_CHANGED))
+        }
+
         fun refreshAll(context: Context): Boolean {
             val manager = AppWidgetManager.getInstance(context)
             val component = ComponentName(context, MarketWidgetProvider::class.java)
@@ -121,6 +196,9 @@ class MarketWidgetProvider : AppWidgetProvider() {
         private fun showLoading(context: Context, manager: AppWidgetManager, id: Int) {
             // Partial update preserves the last displayed prices while refreshing.
             val views = RemoteViews(context.packageName, R.layout.market_widget)
+            // Keep the whole widget tappable even during the initial loading state.
+            // The refresh button remains separate; tapping the widget body opens MainActivity.
+            setRefreshIntent(context, views)
             views.setTextViewText(R.id.widget_status, "در حال به‌روزرسانی قیمت‌ها…")
             manager.partiallyUpdateAppWidget(id, views)
         }
@@ -135,26 +213,35 @@ class MarketWidgetProvider : AppWidgetProvider() {
             val views = RemoteViews(context.packageName, R.layout.market_widget)
             setRefreshIntent(context, views)
 
+            val slots = listOf(
+                arrayOf(R.id.widget_usd_title, R.id.widget_usd_code, R.id.widget_usd_price),
+                arrayOf(R.id.widget_gold_title, R.id.widget_gold_code, R.id.widget_gold_price),
+                arrayOf(R.id.widget_coin_title, R.id.widget_coin_code, R.id.widget_coin_price),
+                arrayOf(R.id.widget_usdt_title, R.id.widget_usdt_code, R.id.widget_usdt_price)
+            )
+            val iconIds = listOf(
+                R.id.widget_usd_icon, R.id.widget_gold_icon,
+                R.id.widget_coin_icon, R.id.widget_usdt_icon
+            )
+            val defaults = listOf("usd", "gram", "emami", "usdt")
+            val prefs = context.getSharedPreferences("arznet_display_preferences", Context.MODE_PRIVATE)
+            val selectedKeys = (0 until 4).map { index ->
+                prefs.getString("widget_slot_" + (index + 1), defaults[index]) ?: defaults[index]
+            }
+            val byKey = prices?.quotes?.associateBy { it.key } ?: emptyMap()
+            slots.forEachIndexed { index, slot ->
+                val quote = byKey[selectedKeys[index]]
+                views.setTextViewText(slot[0], quote?.label ?: selectedKeys[index].uppercase(Locale.ROOT))
+                views.setTextViewText(slot[1], selectedKeys[index].uppercase(Locale.ROOT))
+                views.setTextViewText(iconIds[index], quote?.icon ?: widgetAssetIcon(quote?.key ?: selectedKeys[index], quote?.label ?: selectedKeys[index]))
+                setPrice(views, slot[2], quote?.price, prices != null && !prices.fromCache && quote?.fresh == true)
+            }
+
             if (prices == null) {
-                views.setTextViewText(
-                    R.id.widget_status,
-                    "خطا: ${errorMessage ?: "دریافت اطلاعات ناموفق بود"}"
-                )
-                listOf(
-                    R.id.widget_usd_price,
-                    R.id.widget_gold_price,
-                    R.id.widget_coin_price,
-                    R.id.widget_usdt_price
-                ).forEach { views.setTextViewText(it, "—") }
+                views.setTextViewText(R.id.widget_status, "خطا: " + (errorMessage ?: "دریافت اطلاعات ناموفق بود"))
                 manager.updateAppWidget(id, views)
                 return
             }
-
-            val byKey = prices.quotes.associateBy { it.key }
-            setPrice(views, R.id.widget_usd_price, byKey["usd"]?.price, !prices.fromCache && byKey["usd"]?.fresh == true)
-            setPrice(views, R.id.widget_gold_price, byKey["gram"]?.price, !prices.fromCache && byKey["gram"]?.fresh == true)
-            setPrice(views, R.id.widget_coin_price, byKey["emami"]?.price, !prices.fromCache && byKey["emami"]?.fresh == true)
-            setPrice(views, R.id.widget_usdt_price, byKey["usdt"]?.price, !prices.fromCache && byKey["usdt"]?.fresh == true)
 
             val hasStale = prices.quotes.any { it.price != null && (!it.fresh || prices.fromCache) }
             val hasFresh = prices.quotes.any { it.price != null && it.fresh && !prices.fromCache }
@@ -164,8 +251,8 @@ class MarketWidgetProvider : AppWidgetProvider() {
                 hasStale && hasFresh -> "هشدار: بعضی قیمت‌ها قدیمی‌اند"
                 hasStale -> "هشدار: قیمت قدیمی است؛ قیمت زنده موجود نیست"
                 hasFresh && serverTime != null -> "قیمت زنده • پاسخ سرور $serverTime"
-                hasFresh -> "قیمت زنده • عمر قیمت حداکثر ۶۰ ثانیه است"
-                else -> "قیمت زنده در دسترس نیست؛ زمان معتبر ≤ ۶۰ ثانیه لازم است"
+                hasFresh -> "قیمت زنده • عمر قیمت حداکثر ۹۰ دقیقه است"
+                else -> "قیمت زنده در دسترس نیست؛ زمان معتبر ≤ ۹۰ دقیقه لازم است"
             }
             views.setTextViewText(R.id.widget_status, status)
             manager.updateAppWidget(id, views)
@@ -257,8 +344,13 @@ private fun fetchWidgetPrices(context: Context): WidgetPrices {
                 val code = connection.responseCode
                 if (code !in 200..299) throw IllegalStateException("HTTP $code")
                 val received = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                val check = JSONObject(received)
-                if (!check.optBoolean("ok")) throw IllegalStateException(check.optString("error", "پاسخ نامعتبر"))
+                val trimmed = received.trim()
+                if (trimmed.startsWith("[")) {
+                    org.json.JSONArray(trimmed)
+                } else {
+                    val check = JSONObject(trimmed)
+                    if (!check.optBoolean("ok")) throw IllegalStateException(check.optString("error", "پاسخ نامعتبر"))
+                }
                 body = received
                 prefs.edit().putString("last_json", received).apply()
             } finally {
@@ -279,21 +371,50 @@ private fun fetchWidgetPrices(context: Context): WidgetPrices {
 }
 
 private fun parseWidgetPrices(body: String, fromCache: Boolean): WidgetPrices {
-    val root = JSONObject(body)
-    if (!root.optBoolean("ok")) throw IllegalStateException(root.optString("error", "پاسخ نامعتبر"))
-    val items = root.optJSONObject("items") ?: JSONObject()
-    val keys = listOf("usd", "gram", "emami", "usdt")
-    val quotes = keys.map { key ->
-        val hansha = items.optJSONObject(key)?.optJSONObject("hansha")
-        val timestamp = hansha?.optString("timestamp")?.takeIf { it.isNotBlank() && it != "null" }
-        val price = hansha?.numberOrNull("price")
-        WidgetQuote(key, price, timestamp, price != null && isFresh(timestamp))
+    val trimmed = body.trim()
+    val quotes = mutableListOf<WidgetQuote>()
+    if (trimmed.startsWith("[")) {
+        // Native HANSHA /latest array format.
+        val rows = org.json.JSONArray(trimmed)
+        for (index in 0 until rows.length()) {
+            val item = rows.optJSONObject(index) ?: continue
+            val key = item.optString("ab").trim().lowercase(Locale.ROOT)
+            if (key.isBlank() || key == "null") continue
+            val label = item.optString("fa").takeIf { it.isNotBlank() && it != "null" }
+                ?: item.optString("en").takeIf { it.isNotBlank() && it != "null" }
+                ?: key.uppercase(Locale.ROOT)
+            val latest = item.optJSONArray("ps")?.optJSONObject(0)
+            val buy = latest?.numberOrNull("bp")
+            val sell = latest?.numberOrNull("sp")
+            val price = sell ?: buy
+            val timestamp = latest?.optString("ts")?.takeIf { it.isNotBlank() && it != "null" }
+            val icon = item.optString("av").takeIf { it.isNotBlank() && it != "null" }
+            quotes.add(WidgetQuote(key, label, price, timestamp, price != null && isFresh(timestamp), icon))
+        }
+    } else {
+        // Backward compatibility with the former proxy envelope.
+        val root = JSONObject(trimmed)
+        if (!root.optBoolean("ok")) throw IllegalStateException(root.optString("error", "پاسخ نامعتبر"))
+        val items = root.optJSONObject("items") ?: JSONObject()
+        val keys = items.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val item = items.optJSONObject(key) ?: continue
+            val hansha = item.optJSONObject("hansha") ?: continue
+            val timestamp = hansha.optString("timestamp").takeIf { it.isNotBlank() && it != "null" }
+            val price = hansha.numberOrNull("price")
+            val fields = listOf("label_fa", "name_fa", "title_fa", "fa_name", "label", "name", "title", "symbol")
+            var label: String? = null
+            for (field in fields) {
+                val value = item.optString(field)
+                if (value.isNotBlank() && value != "null") { label = value; break }
+            }
+            if (label == null) label = key.replace('_', ' ').replace('-', ' ').uppercase(Locale.ROOT)
+            quotes.add(WidgetQuote(key, label, price, timestamp, price != null && isFresh(timestamp)))
+        }
     }
-    return WidgetPrices(
-        quotes = quotes,
-        serverUpdatedAt = root.optString("updated_at").takeIf { it.isNotBlank() && it != "null" },
-        fromCache = fromCache
-    )
+    if (quotes.isEmpty()) throw IllegalStateException("در پاسخ HANSHA هیچ دارایی قابل‌خواندن پیدا نشد")
+    return WidgetPrices(addWidgetPlaceholders(quotes), null, fromCache)
 }
 
 private fun JSONObject.numberOrNull(key: String): Double? {
