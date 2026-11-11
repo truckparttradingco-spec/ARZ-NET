@@ -35,7 +35,7 @@ import java.util.Locale
 import java.util.TimeZone
 
 private const val API_URL = "https://hansha.online/latest"
-private const val MAX_PRICE_AGE_SECONDS = 60L
+private const val MAX_PRICE_AGE_SECONDS = 5400L
 private const val PREFS = "arznet_display_preferences"
 private const val HOME_KEYS = "home_asset_keys"
 private const val MAX_HOME_CARDS = 10
