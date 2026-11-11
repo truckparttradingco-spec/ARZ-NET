@@ -34,7 +34,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
-private const val API_URL = "https://truckparttrading.com/price-list/chand/kwgt-proxy.php"
+private const val API_URL = "https://hansha.online/latest"
 private const val MAX_PRICE_AGE_SECONDS = 60L
 private const val PREFS = "arznet_display_preferences"
 private const val HOME_KEYS = "home_asset_keys"
@@ -448,29 +448,53 @@ private fun fetchPrices(): PriceData {
         val stream = if (code in 200..299) connection.inputStream else connection.errorStream
         val body = stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
         if (code !in 200..299) throw IllegalStateException("HTTP $code")
-        val root = JSONObject(body)
-        if (!root.optBoolean("ok")) throw IllegalStateException(root.optString("error", "پاسخ نامعتبر سرور"))
-        val items = root.optJSONObject("items") ?: JSONObject()
+
         val quotes = mutableListOf<Quote>()
-        val keys = items.keys()
-        while (keys.hasNext()) {
-            val key = keys.next()
-            val item = items.optJSONObject(key) ?: continue
-            val hansha = item.optJSONObject("hansha") ?: continue
-            val timestamp = hansha.optString("timestamp").takeIf { it.isNotBlank() && it != "null" }
-            val price = hansha.numOrNull("price")
-            val labelFields = listOf("label_fa", "name_fa", "title_fa", "fa_name", "label", "name", "title", "symbol")
-            var label: String? = null
-            for (field in labelFields) {
-                val value = item.optString(field)
-                if (value.isNotBlank() && value != "null") { label = value; break }
+        val trimmed = body.trim()
+        if (trimmed.startsWith("[")) {
+            // Native HANSHA /latest format: [{ab,av,en,fa,ps:[{bp,sp,ts}]}]
+            val rows = org.json.JSONArray(trimmed)
+            for (index in 0 until rows.length()) {
+                val item = rows.optJSONObject(index) ?: continue
+                val key = item.optString("ab").trim().lowercase(Locale.ROOT)
+                if (key.isBlank() || key == "null") continue
+                val label = item.optString("fa").takeIf { it.isNotBlank() && it != "null" }
+                    ?: item.optString("en").takeIf { it.isNotBlank() && it != "null" }
+                    ?: key.uppercase(Locale.ROOT)
+                val history = item.optJSONArray("ps")
+                val latest = history?.optJSONObject(0)
+                val buy = latest?.numOrNull("bp")
+                val sell = latest?.numOrNull("sp")
+                val timestamp = latest?.optString("ts")?.takeIf { it.isNotBlank() && it != "null" }
+                val price = if (buy != null && sell != null) (buy + sell) / 2.0 else buy ?: sell
+                quotes.add(Quote(key, label, price, buy, sell, null, timestamp, price != null && isFresh(timestamp)))
             }
-            if (label == null) label = key.replace('_', ' ').replace('-', ' ').uppercase(Locale.ROOT)
-            val buy = hansha.numOrNull("buy")
-            val sell = hansha.numOrNull("sell") ?: price
-            quotes.add(Quote(key, label, price, buy, sell, hansha.numOrNull("pct"), timestamp, price != null && isFresh(timestamp)))
+        } else {
+            // Backward compatibility with the existing proxy response.
+            val root = JSONObject(trimmed)
+            if (!root.optBoolean("ok")) throw IllegalStateException(root.optString("error", "پاسخ نامعتبر سرور"))
+            val items = root.optJSONObject("items") ?: JSONObject()
+            val keys = items.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val item = items.optJSONObject(key) ?: continue
+                val hansha = item.optJSONObject("hansha") ?: continue
+                val timestamp = hansha.optString("timestamp").takeIf { it.isNotBlank() && it != "null" }
+                val price = hansha.numOrNull("price")
+                val labelFields = listOf("label_fa", "name_fa", "title_fa", "fa_name", "label", "name", "title", "symbol")
+                var label: String? = null
+                for (field in labelFields) {
+                    val value = item.optString(field)
+                    if (value.isNotBlank() && value != "null") { label = value; break }
+                }
+                if (label == null) label = key.replace('_', ' ').replace('-', ' ').uppercase(Locale.ROOT)
+                val buy = hansha.numOrNull("buy")
+                val sell = hansha.numOrNull("sell") ?: price
+                quotes.add(Quote(key, label, price, buy, sell, hansha.numOrNull("pct"), timestamp, price != null && isFresh(timestamp)))
+            }
         }
-        return PriceData(addRequestedPlaceholders(quotes).sortedBy { it.label }, root.optString("updated_at").takeIf { it.isNotBlank() && it != "null" })
+        if (quotes.isEmpty()) throw IllegalStateException("در پاسخ HANSHA هیچ دارایی قابل‌خواندن پیدا نشد")
+        return PriceData(addRequestedPlaceholders(quotes).sortedBy { it.label }, null)
     } finally {
         connection.disconnect()
     }
