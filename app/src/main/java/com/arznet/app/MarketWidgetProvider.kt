@@ -27,7 +27,7 @@ import java.util.Locale
 import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 
-private const val WIDGET_API_URL = "https://truckparttrading.com/price-list/chand/kwgt-proxy.php"
+private const val WIDGET_API_URL = "https://hansha.online/latest"
 private const val ACTION_REFRESH = "com.arznet.prices.WIDGET_REFRESH"
 private const val ACTION_CONFIG_CHANGED = "com.arznet.prices.WIDGET_CONFIG_CHANGED"
 private const val MAX_PRICE_AGE_SECONDS = 60L
@@ -343,8 +343,13 @@ private fun fetchWidgetPrices(context: Context): WidgetPrices {
                 val code = connection.responseCode
                 if (code !in 200..299) throw IllegalStateException("HTTP $code")
                 val received = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                val check = JSONObject(received)
-                if (!check.optBoolean("ok")) throw IllegalStateException(check.optString("error", "پاسخ نامعتبر"))
+                val trimmed = received.trim()
+                if (trimmed.startsWith("[")) {
+                    org.json.JSONArray(trimmed)
+                } else {
+                    val check = JSONObject(trimmed)
+                    if (!check.optBoolean("ok")) throw IllegalStateException(check.optString("error", "پاسخ نامعتبر"))
+                }
                 body = received
                 prefs.edit().putString("last_json", received).apply()
             } finally {
@@ -365,31 +370,49 @@ private fun fetchWidgetPrices(context: Context): WidgetPrices {
 }
 
 private fun parseWidgetPrices(body: String, fromCache: Boolean): WidgetPrices {
-    val root = JSONObject(body)
-    if (!root.optBoolean("ok")) throw IllegalStateException(root.optString("error", "پاسخ نامعتبر"))
-    val items = root.optJSONObject("items") ?: JSONObject()
+    val trimmed = body.trim()
     val quotes = mutableListOf<WidgetQuote>()
-    val keys = items.keys()
-    while (keys.hasNext()) {
-        val key = keys.next()
-        val item = items.optJSONObject(key) ?: continue
-        val hansha = item.optJSONObject("hansha") ?: continue
-        val timestamp = hansha.optString("timestamp").takeIf { it.isNotBlank() && it != "null" }
-        val price = hansha.numberOrNull("price")
-        val fields = listOf("label_fa", "name_fa", "title_fa", "fa_name", "label", "name", "title", "symbol")
-        var label: String? = null
-        for (field in fields) {
-            val value = item.optString(field)
-            if (value.isNotBlank() && value != "null") { label = value; break }
+    if (trimmed.startsWith("[")) {
+        // Native HANSHA /latest array format.
+        val rows = org.json.JSONArray(trimmed)
+        for (index in 0 until rows.length()) {
+            val item = rows.optJSONObject(index) ?: continue
+            val key = item.optString("ab").trim().lowercase(Locale.ROOT)
+            if (key.isBlank() || key == "null") continue
+            val label = item.optString("fa").takeIf { it.isNotBlank() && it != "null" }
+                ?: item.optString("en").takeIf { it.isNotBlank() && it != "null" }
+                ?: key.uppercase(Locale.ROOT)
+            val latest = item.optJSONArray("ps")?.optJSONObject(0)
+            val buy = latest?.numberOrNull("bp")
+            val sell = latest?.numberOrNull("sp")
+            val price = if (buy != null && sell != null) (buy + sell) / 2.0 else buy ?: sell
+            val timestamp = latest?.optString("ts")?.takeIf { it.isNotBlank() && it != "null" }
+            quotes.add(WidgetQuote(key, label, price, timestamp, price != null && isFresh(timestamp)))
         }
-        if (label == null) label = key.replace('_', ' ').replace('-', ' ').uppercase(Locale.ROOT)
-        quotes.add(WidgetQuote(key, label, price, timestamp, price != null && isFresh(timestamp)))
+    } else {
+        // Backward compatibility with the former proxy envelope.
+        val root = JSONObject(trimmed)
+        if (!root.optBoolean("ok")) throw IllegalStateException(root.optString("error", "پاسخ نامعتبر"))
+        val items = root.optJSONObject("items") ?: JSONObject()
+        val keys = items.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val item = items.optJSONObject(key) ?: continue
+            val hansha = item.optJSONObject("hansha") ?: continue
+            val timestamp = hansha.optString("timestamp").takeIf { it.isNotBlank() && it != "null" }
+            val price = hansha.numberOrNull("price")
+            val fields = listOf("label_fa", "name_fa", "title_fa", "fa_name", "label", "name", "title", "symbol")
+            var label: String? = null
+            for (field in fields) {
+                val value = item.optString(field)
+                if (value.isNotBlank() && value != "null") { label = value; break }
+            }
+            if (label == null) label = key.replace('_', ' ').replace('-', ' ').uppercase(Locale.ROOT)
+            quotes.add(WidgetQuote(key, label, price, timestamp, price != null && isFresh(timestamp)))
+        }
     }
-    return WidgetPrices(
-        quotes = addWidgetPlaceholders(quotes),
-        serverUpdatedAt = root.optString("updated_at").takeIf { it.isNotBlank() && it != "null" },
-        fromCache = fromCache
-    )
+    if (quotes.isEmpty()) throw IllegalStateException("در پاسخ HANSHA هیچ دارایی قابل‌خواندن پیدا نشد")
+    return WidgetPrices(addWidgetPlaceholders(quotes), null, fromCache)
 }
 
 private fun JSONObject.numberOrNull(key: String): Double? {
