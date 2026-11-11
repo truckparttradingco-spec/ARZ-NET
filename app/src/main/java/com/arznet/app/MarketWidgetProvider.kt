@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit
 private const val WIDGET_API_URL = "https://hansha.online/latest"
 private const val ACTION_REFRESH = "com.arznet.prices.WIDGET_REFRESH"
 private const val ACTION_CONFIG_CHANGED = "com.arznet.prices.WIDGET_CONFIG_CHANGED"
-private const val MAX_PRICE_AGE_SECONDS = 60L
+private const val MAX_PRICE_AGE_SECONDS = 5400L
 
 private data class WidgetQuote(
     val key: String,
