@@ -327,7 +327,7 @@ private fun defaultHomeAssetKeys(quotes: List<Quote>): List<String> {
     )
     val used = mutableSetOf<String>()
     val chosen = requestedGroups.mapNotNull { aliases ->
-        fun normalized(value: String) = value.lowercase(Locale.ROOT).replace("_", " ").replace("-", " ").trim()
+        fun normalized(value: String) = normalizeAssetText(value)
         val exactKey = quotes.firstOrNull { q -> aliases.any { normalized(q.key) == it } }
         val exactLabel = quotes.firstOrNull { q -> aliases.any { normalized(q.label) == it } }
         val match = exactKey ?: exactLabel ?: quotes.firstOrNull { q ->
