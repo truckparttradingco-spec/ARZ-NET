@@ -37,7 +37,8 @@ private data class WidgetQuote(
     val label: String,
     val price: Double?,
     val timestamp: String?,
-    val fresh: Boolean
+    val fresh: Boolean,
+    val icon: String? = null
 )
 
 private data class WidgetPrices(
@@ -232,7 +233,7 @@ class MarketWidgetProvider : AppWidgetProvider() {
                 val quote = byKey[selectedKeys[index]]
                 views.setTextViewText(slot[0], quote?.label ?: selectedKeys[index].uppercase(Locale.ROOT))
                 views.setTextViewText(slot[1], selectedKeys[index].uppercase(Locale.ROOT))
-                views.setTextViewText(iconIds[index], widgetAssetIcon(quote?.key ?: selectedKeys[index], quote?.label ?: selectedKeys[index]))
+                views.setTextViewText(iconIds[index], quote?.icon ?: widgetAssetIcon(quote?.key ?: selectedKeys[index], quote?.label ?: selectedKeys[index]))
                 setPrice(views, slot[2], quote?.price, prices != null && !prices.fromCache && quote?.fresh == true)
             }
 
@@ -385,9 +386,10 @@ private fun parseWidgetPrices(body: String, fromCache: Boolean): WidgetPrices {
             val latest = item.optJSONArray("ps")?.optJSONObject(0)
             val buy = latest?.numberOrNull("bp")
             val sell = latest?.numberOrNull("sp")
-            val price = if (buy != null && sell != null) (buy + sell) / 2.0 else buy ?: sell
+            val price = sell ?: buy
             val timestamp = latest?.optString("ts")?.takeIf { it.isNotBlank() && it != "null" }
-            quotes.add(WidgetQuote(key, label, price, timestamp, price != null && isFresh(timestamp)))
+            val icon = item.optString("av").takeIf { it.isNotBlank() && it != "null" }
+            quotes.add(WidgetQuote(key, label, price, timestamp, price != null && isFresh(timestamp), icon))
         }
     } else {
         // Backward compatibility with the former proxy envelope.
