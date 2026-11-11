@@ -39,6 +39,65 @@ private const val MAX_PRICE_AGE_SECONDS = 60L
 private const val PREFS = "arznet_display_preferences"
 private const val HOME_KEYS = "home_asset_keys"
 private const val MAX_HOME_CARDS = 10
+
+private data class CatalogAsset(val key: String, val label: String, val aliases: List<String>)
+private val requestedCatalog = listOf(
+    CatalogAsset("usd", "دلار آمریکا", listOf("usd", "dollar", "دلار آزاد", "دلار آمریکا")),
+    CatalogAsset("usdt", "تتر", listOf("usdt", "tether", "تتر")),
+    CatalogAsset("aed", "درهم امارات", listOf("aed", "dirham", "درهم")),
+    CatalogAsset("gold_18k_gram", "طلای ۱۸ عیار (گرم)", listOf("gold18", "18k", "18 karat", "18 عیار", "طلای ۱۸")),
+    CatalogAsset("coin_emami", "سکه تمام امامی", listOf("emami", "سکه امامی", "تمام امامی")),
+    CatalogAsset("coin_bahar_old", "سکه تمام بهار آزادی طرح قدیم", listOf("bahar", "طرح قدیم", "بهار آزادی")),
+    CatalogAsset("coin_half", "نیم‌سکه", listOf("nim", "half coin", "نیم سکه", "نیم‌سکه")),
+    CatalogAsset("coin_quarter", "ربع‌سکه", listOf("rob", "quarter coin", "ربع سکه", "ربع‌سکه")),
+    CatalogAsset("coin_gram", "سکه یک‌گرمی", listOf("gerami", "gram coin", "سکه یک گرمی", "سکه یک‌گرمی")),
+    CatalogAsset("try", "لیر ترکیه", listOf("try", "turkish lira", "لیر ترکیه")),
+    CatalogAsset("cny", "یوان چین", listOf("cny", "yuan", "rmb", "یوان")),
+    CatalogAsset("xau", "اونس جهانی طلا", listOf("xau", "gold ounce", "اونس طلا", "اونس جهانی")),
+    CatalogAsset("xag", "اونس جهانی نقره", listOf("xag", "silver ounce", "اونس نقره")),
+    CatalogAsset("xpt", "اونس جهانی پلاتین", listOf("xpt", "platinum", "اونس پلاتین")),
+    CatalogAsset("xpd", "اونس جهانی پالادیوم", listOf("xpd", "palladium", "اونس پالادیوم"))
+)
+
+private fun normalizeAssetText(value: String): String =
+    value.lowercase(Locale.ROOT).replace("_", "").replace("-", "").replace(" ", "").replace("‌", "")
+
+private fun matchesCatalogAsset(key: String, label: String, asset: CatalogAsset): Boolean {
+    val k = normalizeAssetText(key)
+    val n = normalizeAssetText(label)
+    return asset.aliases.any { alias ->
+        val a = normalizeAssetText(alias)
+        k == a || n == a || (a.length >= 4 && (k.contains(a) || n.contains(a)))
+    }
+}
+
+private fun addRequestedPlaceholders(quotes: List<Quote>): List<Quote> {
+    val result = quotes.toMutableList()
+    requestedCatalog.forEach { asset ->
+        if (result.none { matchesCatalogAsset(it.key, it.label, asset) }) {
+            result.add(Quote(asset.key, asset.label, null, null, null, null, null, false))
+        }
+    }
+    return result
+}
+
+private fun assetIcon(key: String, label: String): String {
+    val value = normalizeAssetText("$key $label")
+    return when {
+        value.contains("usdt") || value.contains("tether") || value.contains("تتر") -> "₮"
+        value.contains("aed") || value.contains("dirham") || value.contains("درهم") -> "🇦🇪"
+        value.contains("try") || value.contains("turkish") || value.contains("لیر") -> "🇹🇷"
+        value.contains("cny") || value.contains("yuan") || value.contains("یوان") -> "🇨🇳"
+        value.contains("usd") || value.contains("dollar") || value.contains("دلار") -> "🇺🇸"
+        value.contains("xag") || value.contains("silver") || value.contains("نقره") -> "⚪"
+        value.contains("xpt") || value.contains("platinum") || value.contains("پلاتین") -> "⚙️"
+        value.contains("xpd") || value.contains("palladium") || value.contains("پالادیوم") -> "💠"
+        value.contains("xau") || value.contains("ounce") || value.contains("اونس") -> "🌐"
+        value.contains("coin") || value.contains("سکه") || value.contains("emami") || value.contains("bahar") -> "🪙"
+        value.contains("gold") || value.contains("gram") || value.contains("طلا") -> "🟡"
+        else -> "💱"
+    }
+}
 private val Bg = Color(0xFF080D16)
 private val Panel = Color(0xFF111B2A)
 private val CardBg = Color(0xFF142237)
@@ -98,7 +157,9 @@ private fun PricesScreen() {
                 homeKeys = defaultHomeAssetKeys(received.quotes)
                 prefs.edit().putString(HOME_KEYS, homeKeys.joinToString(",")).apply()
             } else {
-                homeKeys = homeKeys.filter { it in available }.take(MAX_HOME_CARDS)
+                val retained = homeKeys.filter { it in available }
+                val defaults = defaultHomeAssetKeys(received.quotes)
+                homeKeys = (retained + defaults.filterNot { it in retained }).take(MAX_HOME_CARDS)
                 prefs.edit().putString(HOME_KEYS, homeKeys.joinToString(",")).apply()
             }
             error = null
@@ -206,7 +267,7 @@ private fun PricesScreen() {
             title = { Text("انتخاب ۱۰ کارت صفحه اصلی") },
             text = {
                 Column {
-                    Text("${homeKeys.size} کارت انتخاب شده", color = Muted, fontSize = 12.sp)
+                    Text("${homeKeys.size} از ۱۰ کارت انتخاب شده", color = if (homeKeys.size == MAX_HOME_CARDS) Green else Muted, fontSize = 12.sp)
                     Spacer(Modifier.height(6.dp))
                     androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.heightIn(max = 440.dp)) {
                         items(data!!.quotes.size) { quoteIndex ->
@@ -225,14 +286,14 @@ private fun PricesScreen() {
                                         }
                                     }
                                 )
-                                Text(quote.label, color = White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Row(verticalAlignment = Alignment.CenterVertically) { Text(assetIcon(quote.key, quote.label), fontSize = 19.sp); Spacer(Modifier.width(8.dp)); Text(quote.label, color = White, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             }
                         }
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(enabled = homeKeys.size == MAX_HOME_CARDS, onClick = {
                     prefs.edit().putString(HOME_KEYS, homeKeys.joinToString(",")).apply()
                     showHomeSettings = false
                 }) { Text("ذخیره") }
@@ -313,7 +374,7 @@ private fun AssetPicker(quotes: List<Quote>, selectedKey: String, onSelect: (Str
     val current = quotes.firstOrNull { it.key == selectedKey }
     Box {
         OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-            Text(current?.label ?: selectedKey, color = White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) { Text(assetIcon(current?.key ?: selectedKey, current?.label ?: selectedKey), fontSize = 18.sp); Spacer(Modifier.width(8.dp)); Text(current?.label ?: selectedKey, color = White, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
         DropdownMenu(
             expanded = expanded,
@@ -322,7 +383,7 @@ private fun AssetPicker(quotes: List<Quote>, selectedKey: String, onSelect: (Str
         ) {
             quotes.forEach { quote ->
                 DropdownMenuItem(
-                    text = { Text(quote.label) },
+                    text = { Row(verticalAlignment = Alignment.CenterVertically) { Text(assetIcon(quote.key, quote.label)); Spacer(Modifier.width(8.dp)); Text(quote.label) } },
                     onClick = { onSelect(quote.key); expanded = false }
                 )
             }
@@ -343,7 +404,7 @@ private fun QuoteCard(q: Quote) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(q.label, color = White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) { Text(assetIcon(q.key, q.label), fontSize = 21.sp); Spacer(Modifier.width(7.dp)); Text(q.label, color = White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             Text(q.pct?.let { String.format(Locale.US, "%.2f", it) + "%" } ?: "—", color = changeColor, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
         }
         Spacer(Modifier.height(7.dp))
@@ -408,7 +469,7 @@ private fun fetchPrices(): PriceData {
             val sell = hansha.numOrNull("sell") ?: price
             quotes.add(Quote(key, label, price, buy, sell, hansha.numOrNull("pct"), timestamp, price != null && isFresh(timestamp)))
         }
-        return PriceData(quotes.sortedBy { it.label }, root.optString("updated_at").takeIf { it.isNotBlank() && it != "null" })
+        return PriceData(addRequestedPlaceholders(quotes).sortedBy { it.label }, root.optString("updated_at").takeIf { it.isNotBlank() && it != "null" })
     } finally {
         connection.disconnect()
     }
