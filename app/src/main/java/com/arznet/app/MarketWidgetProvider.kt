@@ -46,6 +46,65 @@ private data class WidgetPrices(
     val fromCache: Boolean = false
 )
 
+private data class WidgetCatalogAsset(val key: String, val label: String, val aliases: List<String>)
+private val widgetCatalog = listOf(
+    WidgetCatalogAsset("usd", "دلار آمریکا", listOf("usd", "dollar", "دلار آزاد", "دلار آمریکا")),
+    WidgetCatalogAsset("usdt", "تتر", listOf("usdt", "tether", "تتر")),
+    WidgetCatalogAsset("aed", "درهم امارات", listOf("aed", "dirham", "درهم")),
+    WidgetCatalogAsset("gold_18k_gram", "طلای ۱۸ عیار (گرم)", listOf("gold18", "18k", "18 karat", "18 عیار", "طلای ۱۸")),
+    WidgetCatalogAsset("coin_emami", "سکه تمام امامی", listOf("emami", "سکه امامی", "تمام امامی")),
+    WidgetCatalogAsset("coin_bahar_old", "سکه تمام بهار آزادی طرح قدیم", listOf("bahar", "طرح قدیم", "بهار آزادی")),
+    WidgetCatalogAsset("coin_half", "نیم‌سکه", listOf("nim", "half coin", "نیم سکه", "نیم‌سکه")),
+    WidgetCatalogAsset("coin_quarter", "ربع‌سکه", listOf("rob", "quarter coin", "ربع سکه", "ربع‌سکه")),
+    WidgetCatalogAsset("coin_gram", "سکه یک‌گرمی", listOf("gerami", "gram coin", "سکه یک گرمی", "سکه یک‌گرمی")),
+    WidgetCatalogAsset("try", "لیر ترکیه", listOf("try", "turkish lira", "لیر ترکیه")),
+    WidgetCatalogAsset("cny", "یوان چین", listOf("cny", "yuan", "rmb", "یوان")),
+    WidgetCatalogAsset("xau", "اونس جهانی طلا", listOf("xau", "gold ounce", "اونس طلا", "اونس جهانی")),
+    WidgetCatalogAsset("xag", "اونس جهانی نقره", listOf("xag", "silver ounce", "اونس نقره")),
+    WidgetCatalogAsset("xpt", "اونس جهانی پلاتین", listOf("xpt", "platinum", "اونس پلاتین")),
+    WidgetCatalogAsset("xpd", "اونس جهانی پالادیوم", listOf("xpd", "palladium", "اونس پالادیوم"))
+)
+
+private fun normalizeWidgetAsset(value: String): String =
+    value.lowercase(Locale.ROOT).replace("_", "").replace("-", "").replace(" ", "").replace("‌", "")
+
+private fun widgetMatchesCatalog(key: String, label: String, asset: WidgetCatalogAsset): Boolean {
+    val k = normalizeWidgetAsset(key)
+    val n = normalizeWidgetAsset(label)
+    return asset.aliases.any { alias ->
+        val a = normalizeWidgetAsset(alias)
+        k == a || n == a || (a.length >= 4 && (k.contains(a) || n.contains(a)))
+    }
+}
+
+private fun addWidgetPlaceholders(quotes: List<WidgetQuote>): List<WidgetQuote> {
+    val result = quotes.toMutableList()
+    widgetCatalog.forEach { asset ->
+        if (result.none { widgetMatchesCatalog(it.key, it.label, asset) }) {
+            result.add(WidgetQuote(asset.key, asset.label, null, null, false))
+        }
+    }
+    return result
+}
+
+private fun widgetAssetIcon(key: String, label: String): String {
+    val value = normalizeWidgetAsset("$key $label")
+    return when {
+        value.contains("usdt") || value.contains("tether") || value.contains("تتر") -> "₮"
+        value.contains("aed") || value.contains("dirham") || value.contains("درهم") -> "🇦🇪"
+        value.contains("try") || value.contains("turkish") || value.contains("لیر") -> "🇹🇷"
+        value.contains("cny") || value.contains("yuan") || value.contains("یوان") -> "🇨🇳"
+        value.contains("usd") || value.contains("dollar") || value.contains("دلار") -> "🇺🇸"
+        value.contains("xag") || value.contains("silver") || value.contains("نقره") -> "⚪"
+        value.contains("xpt") || value.contains("platinum") || value.contains("پلاتین") -> "⚙️"
+        value.contains("xpd") || value.contains("palladium") || value.contains("پالادیوم") -> "💠"
+        value.contains("xau") || value.contains("ounce") || value.contains("اونس") -> "🌐"
+        value.contains("coin") || value.contains("سکه") || value.contains("emami") || value.contains("bahar") -> "🪙"
+        value.contains("gold") || value.contains("gram") || value.contains("طلا") -> "🟡"
+        else -> "💱"
+    }
+}
+
 class MarketWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
         scheduleWidgetWork(context)
@@ -159,6 +218,10 @@ class MarketWidgetProvider : AppWidgetProvider() {
                 arrayOf(R.id.widget_coin_title, R.id.widget_coin_code, R.id.widget_coin_price),
                 arrayOf(R.id.widget_usdt_title, R.id.widget_usdt_code, R.id.widget_usdt_price)
             )
+            val iconIds = listOf(
+                R.id.widget_usd_icon, R.id.widget_gold_icon,
+                R.id.widget_coin_icon, R.id.widget_usdt_icon
+            )
             val defaults = listOf("usd", "gram", "emami", "usdt")
             val prefs = context.getSharedPreferences("arznet_display_preferences", Context.MODE_PRIVATE)
             val selectedKeys = (0 until 4).map { index ->
@@ -169,6 +232,7 @@ class MarketWidgetProvider : AppWidgetProvider() {
                 val quote = byKey[selectedKeys[index]]
                 views.setTextViewText(slot[0], quote?.label ?: selectedKeys[index].uppercase(Locale.ROOT))
                 views.setTextViewText(slot[1], selectedKeys[index].uppercase(Locale.ROOT))
+                views.setTextViewText(iconIds[index], widgetAssetIcon(quote?.key ?: selectedKeys[index], quote?.label ?: selectedKeys[index]))
                 setPrice(views, slot[2], quote?.price, prices != null && !prices.fromCache && quote?.fresh == true)
             }
 
@@ -322,7 +386,7 @@ private fun parseWidgetPrices(body: String, fromCache: Boolean): WidgetPrices {
         quotes.add(WidgetQuote(key, label, price, timestamp, price != null && isFresh(timestamp)))
     }
     return WidgetPrices(
-        quotes = quotes,
+        quotes = addWidgetPlaceholders(quotes),
         serverUpdatedAt = root.optString("updated_at").takeIf { it.isNotBlank() && it != "null" },
         fromCache = fromCache
     )
