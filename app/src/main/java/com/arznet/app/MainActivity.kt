@@ -86,7 +86,7 @@ private fun assetIcon(key: String, label: String): String {
     return when {
         value.contains("usdt") || value.contains("tether") || value.contains("تتر") -> "₮"
         value.contains("aed") || value.contains("dirham") || value.contains("درهم") -> "🇦🇪"
-        value.contains("try") || value.contains("turkish") || value.contains("لیر") -> "🇹🇷"
+        normalizeAssetText(key) == "try" || normalizeAssetText(key).startsWith("try") || value.contains("turkish") || value.contains("لیرترکیه") -> "🇹🇷"
         value.contains("cny") || value.contains("yuan") || value.contains("یوان") -> "🇨🇳"
         value.contains("usd") || value.contains("dollar") || value.contains("دلار") -> "🇺🇸"
         value.contains("xag") || value.contains("silver") || value.contains("نقره") -> "⚪"
@@ -268,6 +268,7 @@ private fun PricesScreen() {
             text = {
                 Column {
                     Text("${homeKeys.size} از ۱۰ کارت انتخاب شده", color = if (homeKeys.size == MAX_HOME_CARDS) Green else Muted, fontSize = 12.sp)
+                    if (homeKeys.size != MAX_HOME_CARDS) Text("برای ذخیره، دقیقاً ۱۰ کارت انتخاب کنید.", color = Muted, fontSize = 11.sp)
                     Spacer(Modifier.height(6.dp))
                     androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.heightIn(max = 440.dp)) {
                         items(data!!.quotes.size) { quoteIndex ->
@@ -331,7 +332,7 @@ private fun defaultHomeAssetKeys(quotes: List<Quote>): List<String> {
         val exactKey = quotes.firstOrNull { q -> aliases.any { normalized(q.key) == it } }
         val exactLabel = quotes.firstOrNull { q -> aliases.any { normalized(q.label) == it } }
         val match = exactKey ?: exactLabel ?: quotes.firstOrNull { q ->
-            aliases.any { alias -> normalized(q.key).contains(alias) || normalized(q.label).contains(alias) }
+            aliases.any { alias -> alias.length >= 4 && (normalized(q.key).contains(alias) || normalized(q.label).contains(alias)) }
         }
         match?.key?.takeIf { used.add(it) }
     }
