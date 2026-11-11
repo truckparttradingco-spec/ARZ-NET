@@ -92,7 +92,7 @@ private fun widgetAssetIcon(key: String, label: String): String {
     return when {
         value.contains("usdt") || value.contains("tether") || value.contains("تتر") -> "₮"
         value.contains("aed") || value.contains("dirham") || value.contains("درهم") -> "🇦🇪"
-        value.contains("try") || value.contains("turkish") || value.contains("لیر") -> "🇹🇷"
+        normalizeWidgetAsset(key) == "try" || normalizeWidgetAsset(key).startsWith("try") || value.contains("turkish") || value.contains("لیرترکیه") -> "🇹🇷"
         value.contains("cny") || value.contains("yuan") || value.contains("یوان") -> "🇨🇳"
         value.contains("usd") || value.contains("dollar") || value.contains("دلار") -> "🇺🇸"
         value.contains("xag") || value.contains("silver") || value.contains("نقره") -> "⚪"
