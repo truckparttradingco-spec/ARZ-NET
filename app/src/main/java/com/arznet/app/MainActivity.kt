@@ -288,7 +288,7 @@ private fun PricesScreen() {
                                         }
                                     }
                                 )
-                                Row(verticalAlignment = Alignment.CenterVertically) { Text(assetIcon(quote.key, quote.label), fontSize = 19.sp); Spacer(Modifier.width(8.dp)); Text(quote.label, color = White, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                                Row(verticalAlignment = Alignment.CenterVertically) { Text(quote.icon ?: assetIcon(quote.key, quote.label), fontSize = 19.sp); Spacer(Modifier.width(8.dp)); Text(quote.label, color = White, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             }
                         }
                     }
@@ -385,7 +385,7 @@ private fun AssetPicker(quotes: List<Quote>, selectedKey: String, onSelect: (Str
         ) {
             quotes.forEach { quote ->
                 DropdownMenuItem(
-                    text = { Row(verticalAlignment = Alignment.CenterVertically) { Text(assetIcon(quote.key, quote.label)); Spacer(Modifier.width(8.dp)); Text(quote.label) } },
+                    text = { Row(verticalAlignment = Alignment.CenterVertically) { Text(quote.icon ?: assetIcon(quote.key, quote.label)); Spacer(Modifier.width(8.dp)); Text(quote.label) } },
                     onClick = { onSelect(quote.key); expanded = false }
                 )
             }
