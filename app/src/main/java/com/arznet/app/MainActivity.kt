@@ -45,9 +45,9 @@ private val requestedCatalog = listOf(
     CatalogAsset("usd", "دلار آمریکا", listOf("usd", "dollar", "دلار آزاد", "دلار آمریکا")),
     CatalogAsset("usdt", "تتر", listOf("usdt", "tether", "تتر")),
     CatalogAsset("aed", "درهم امارات", listOf("aed", "dirham", "درهم")),
-    CatalogAsset("gold_18k_gram", "طلای ۱۸ عیار (گرم)", listOf("gold18", "18k", "18 karat", "18 عیار", "طلای ۱۸")),
+    CatalogAsset("gold_18k_gram", "طلای ۱۸ عیار (گرم)", listOf("gram", "gold gram", "gold18", "18k", "18 karat", "18 عیار", "طلای ۱۸", "گرم طلا")),
     CatalogAsset("coin_emami", "سکه تمام امامی", listOf("emami", "سکه امامی", "تمام امامی")),
-    CatalogAsset("coin_bahar_old", "سکه تمام بهار آزادی طرح قدیم", listOf("bahar", "طرح قدیم", "بهار آزادی")),
+    CatalogAsset("coin_bahar_old", "سکه تمام بهار آزادی طرح قدیم", listOf("azadi", "bahar", "طرح قدیم", "بهار آزادی")),
     CatalogAsset("coin_half", "نیم‌سکه", listOf("nim", "half coin", "نیم سکه", "نیم‌سکه")),
     CatalogAsset("coin_quarter", "ربع‌سکه", listOf("rob", "quarter coin", "ربع سکه", "ربع‌سکه")),
     CatalogAsset("coin_gram", "سکه یک‌گرمی", listOf("gerami", "gram coin", "سکه یک گرمی", "سکه یک‌گرمی")),
@@ -116,7 +116,8 @@ data class Quote(
     val sell: Double?,
     val pct: Double?,
     val timestamp: String?,
-    val fresh: Boolean
+    val fresh: Boolean,
+    val icon: String? = null
 )
 data class PriceData(val quotes: List<Quote>, val updatedAt: String?)
 
@@ -405,16 +406,25 @@ private fun QuoteCard(q: Quote) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) { Text(assetIcon(q.key, q.label), fontSize = 21.sp); Spacer(Modifier.width(7.dp)); Text(q.label, color = White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) { Text(q.icon ?: assetIcon(q.key, q.label), fontSize = 21.sp); Spacer(Modifier.width(7.dp)); Text(q.label, color = White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             Text(q.pct?.let { String.format(Locale.US, "%.2f", it) + "%" } ?: "—", color = changeColor, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
         }
         Spacer(Modifier.height(7.dp))
-        Row(
-            Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(9.dp)).padding(vertical = 8.dp, horizontal = 5.dp)
-        ) {
-            PriceColumn("خرید", q.buy, Green, Modifier.weight(1f))
-            Box(Modifier.width(1.dp).height(32.dp).background(Stroke))
-            PriceColumn("فروش", q.sell, Blue, Modifier.weight(1f))
+        if (q.buy != null && q.sell != null) {
+            Row(
+                Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(9.dp)).padding(vertical = 8.dp, horizontal = 5.dp)
+            ) {
+                PriceColumn("خرید", q.buy, Green, Modifier.weight(1f))
+                Box(Modifier.width(1.dp).height(32.dp).background(Stroke))
+                PriceColumn("فروش", q.sell, Blue, Modifier.weight(1f))
+            }
+        } else {
+            Row(
+                Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(9.dp)).padding(vertical = 8.dp, horizontal = 5.dp),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                PriceColumn("قیمت بازار", q.price, Blue, Modifier.fillMaxWidth())
+            }
         }
         Spacer(Modifier.height(6.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -467,7 +477,8 @@ private fun fetchPrices(): PriceData {
                 val sell = latest?.numOrNull("sp")
                 val timestamp = latest?.optString("ts")?.takeIf { it.isNotBlank() && it != "null" }
                 val price = if (buy != null && sell != null) (buy + sell) / 2.0 else buy ?: sell
-                quotes.add(Quote(key, label, price, buy, sell, null, timestamp, price != null && isFresh(timestamp)))
+                val icon = item.optString("av").takeIf { it.isNotBlank() && it != "null" }
+                quotes.add(Quote(key, label, price, buy, sell, null, timestamp, price != null && isFresh(timestamp), icon))
             }
         } else {
             // Backward compatibility with the existing proxy response.
