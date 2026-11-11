@@ -317,13 +317,13 @@ private fun defaultHomeAssetKeys(quotes: List<Quote>): List<String> {
         listOf("usd", "us dollar", "دلار"),
         listOf("usdt", "tether", "تتر"),
         listOf("aed", "dirham", "درهم"),
-        listOf("gram", "18k", "18 karat", "gold gram", "گرم", "۱۸ عیار"),
+        listOf("gold_18k_gram", "gold18", "18k", "18 karat", "gold gram", "طلای ۱۸", "۱۸ عیار"),
         listOf("emami", "full coin", "bahar azadi", "سکه امامی", "تمام سکه"),
         listOf("nim", "half coin", "نیم سکه"),
         listOf("rob", "quarter coin", "ربع سکه"),
         listOf("try", "turkish lira", "لیر ترکیه"),
         listOf("cny", "yuan", "rmb", "یوان"),
-        listOf("ounce", "xau", "ons", "اونس")
+        listOf("xau", "gold ounce", "اونس طلا", "اونس جهانی طلا")
     )
     val used = mutableSetOf<String>()
     val chosen = requestedGroups.mapNotNull { aliases ->
